@@ -312,6 +312,21 @@
     };
   }
 
+  function pageCandidateIndex(node, pageNode) {
+    var page = pageNode || nearestPageNode(node);
+    if (!page || !node) return -1;
+    var targetId = node.getAttribute ? node.getAttribute('data-print-break-id') || '' : '';
+    if (!targetId) {
+      var contractNode = nearestContractNode(node);
+      targetId = contractNode && contractNode.getAttribute ? contractNode.getAttribute('data-print-break-id') || '' : '';
+    }
+    if (!targetId) return -1;
+    var ids = Array.from(page.querySelectorAll('[data-print-break-id]')).map(function (candidateNode) {
+      return candidateNode.getAttribute('data-print-break-id') || '';
+    });
+    return ids.indexOf(targetId);
+  }
+
   function captureBlockContext(node) {
     if (!node || node.nodeType !== 1) {
       return {
@@ -321,6 +336,8 @@
     var meta = readBlockMeta(node);
     var contractNode = meta && meta.contract_node ? meta.contract_node : node;
     var rect = contractNode && contractNode.getBoundingClientRect ? contractNode.getBoundingClientRect() : null;
+    var pageNode = nearestPageNode(contractNode);
+    var pageRect = pageNode && pageNode.getBoundingClientRect ? pageNode.getBoundingClientRect() : null;
     var text = normalizeText((contractNode || node).textContent || '');
     return {
       persist_id: meta && meta.persist_id ? meta.persist_id : '',
@@ -338,11 +355,40 @@
       list_depth: listDepth(contractNode),
       dom_height_px: rect ? Math.round(rect.height) : null,
       dom_width_px: rect ? Math.round(rect.width) : null,
+      viewport_top_px: rect ? Math.round(rect.top) : null,
+      page_offset_top_px: rect && pageRect ? Math.round(rect.top - pageRect.top) : null,
+      page_candidate_index: pageCandidateIndex(contractNode, pageNode),
       image_aspect_ratio: (function () {
         var image = contractNode.matches('img') ? contractNode : contractNode.querySelector('img');
         if (!image || !image.naturalWidth || !image.naturalHeight) return null;
         return Number((image.naturalWidth / image.naturalHeight).toFixed(4));
       })()
+    };
+  }
+
+  function captureViewportContext(targetNode, suppliedViewport) {
+    var provided = suppliedViewport && typeof suppliedViewport === 'object' ? suppliedViewport : null;
+    if (provided) return provided;
+    return {
+      scroll_top_px: Math.round(window.scrollY || window.pageYOffset || 0),
+      viewport_height_px: Math.round(window.innerHeight || 0),
+      viewport_width_px: Math.round(window.innerWidth || 0),
+      target_offset_top_px: targetNode && targetNode.getBoundingClientRect ? Math.round(targetNode.getBoundingClientRect().top) : null
+    };
+  }
+
+  function captureSelectionContext(selectionPayload) {
+    if (selectionPayload && typeof selectionPayload === 'object') {
+      return selectionPayload;
+    }
+    var active = document.activeElement;
+    return {
+      kind: '',
+      candidate_id: '',
+      persist_id: '',
+      page_number: 0,
+      active_edit_id: active && active.dataset ? active.dataset.printEditId || '' : '',
+      has_selection: false
     };
   }
 
@@ -383,12 +429,24 @@
   function buildTarget(payload, targetNode, pageNode) {
     var node = targetNode || null;
     var meta = readBlockMeta(node);
+    var rect = node && node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+    var resolvedPage = pageNode || nearestPageNode(node);
+    var pageRect = resolvedPage && resolvedPage.getBoundingClientRect ? resolvedPage.getBoundingClientRect() : null;
     return {
       candidate_id: (payload && payload.candidateId) || (node && node.getAttribute ? node.getAttribute('data-print-break-id') || '' : ''),
       persist_id: (payload && payload.persistId) || (meta && meta.persist_id) || (node && node.getAttribute ? node.getAttribute('data-print-persist-id') || '' : ''),
-      page_number: (payload && payload.pageNumber) || pageNumberFromNode(pageNode || nearestPageNode(node)),
+      page_number: parseIntOr(payload && payload.pageNumber, pageNumberFromNode(pageNode || nearestPageNode(node))),
       node_kind: (payload && payload.nodeKind) || blockType(node),
-      tag_name: (meta && meta.tag_name) || (node && node.tagName ? node.tagName.toLowerCase() : '')
+      tag_name: (meta && meta.tag_name) || (node && node.tagName ? node.tagName.toLowerCase() : ''),
+      block_type: (meta && meta.block_type) || '',
+      block_role: (meta && meta.block_role) || '',
+      atomic: meta ? !!meta.atomic : false,
+      section_index: meta && meta.section_index >= 0 ? meta.section_index : -1,
+      order_index: meta && meta.order_index >= 0 ? meta.order_index : -1,
+      label: (meta && meta.label) || '',
+      viewport_top_px: rect ? Math.round(rect.top) : null,
+      page_offset_top_px: rect && pageRect ? Math.round(rect.top - pageRect.top) : null,
+      page_candidate_index: pageCandidateIndex(node, resolvedPage)
     };
   }
 
@@ -465,7 +523,9 @@
         doc: documentContext || captureDocumentContext(),
         page: capturePageContext(pageNode, targetNode),
         block: captureBlockContext(targetNode),
-        neighbors: captureNeighbors(targetNode)
+        neighbors: captureNeighbors(targetNode),
+        viewport: captureViewportContext(targetNode, safePayload.viewport),
+        selection: captureSelectionContext(safePayload.selection)
       },
       ui: safePayload.ui || {}
     };

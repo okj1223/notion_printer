@@ -42,7 +42,8 @@
         "set_image_scale",
         "delete_node",
         "delete_page",
-        "undo"
+        "undo",
+        "layout_reflow"
       ]
     },
     "target": {
@@ -52,7 +53,16 @@
         "persist_id": { "type": "string" },
         "page_number": { "type": "integer" },
         "node_kind": { "type": "string" },
-        "tag_name": { "type": "string" }
+        "tag_name": { "type": "string" },
+        "block_type": { "type": "string" },
+        "block_role": { "type": "string" },
+        "atomic": { "type": "boolean" },
+        "section_index": { "type": "integer" },
+        "order_index": { "type": "integer" },
+        "label": { "type": "string" },
+        "viewport_top_px": { "type": ["integer", "null"] },
+        "page_offset_top_px": { "type": ["integer", "null"] },
+        "page_candidate_index": { "type": "integer" }
       },
       "additionalProperties": true
     },
@@ -82,6 +92,14 @@
         "neighbors": {
           "type": "object",
           "additionalProperties": true
+        },
+        "viewport": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
@@ -92,6 +110,10 @@
         "source": { "type": "string" },
         "suggestion_source": { "type": "string" }
       },
+      "additionalProperties": true
+    },
+    "meta": {
+      "type": "object",
       "additionalProperties": true
     }
   },

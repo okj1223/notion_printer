@@ -61,6 +61,7 @@
   var renderedDomHistory = [];
   var reloadFocusRestoreScheduled = false;
   var manifestStorageSalt = '';
+  var selectedTargetState = { kind: '', candidateId: '', persistId: '', pageNumber: 0 };
 
   function readManifestPayload() {
     try {
@@ -370,7 +371,15 @@
     try {
       var learning = learningRuntime();
       if (!learning || typeof learning.logAction !== 'function') return '';
-      return learning.logAction(actionType, payload || {});
+      var safePayload = Object.assign({}, payload || {});
+      var targetNode = safePayload.targetNode || safePayload.node || null;
+      if (!safePayload.selection) {
+        safePayload.selection = Object.assign({ active_edit_id: activeEditableId() }, currentSelectedTarget());
+      }
+      if (!safePayload.viewport) {
+        safePayload.viewport = captureViewportMetrics(targetNode);
+      }
+      return learning.logAction(actionType, safePayload);
     } catch (error) {
       return '';
     }
@@ -581,6 +590,7 @@
     applyStoredImageScales();
     syncEditorUiControls();
     refreshEditorList();
+    syncSelectedRenderedState();
   }
 
   function readHistoryStack() {
@@ -1633,9 +1643,10 @@
     return '빈칸: ' + (amount > 0 ? String(amount) : '0');
   }
 
-  function highlightAndScrollToNode(node) {
-    if (!node || !node.scrollIntoView) return;
-    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  function highlightAndScrollToNode(node, options) {
+    if (!node) return;
+    var config = options || {};
+    scrollNodeToOffset(node, typeof config.offsetTopPx === 'number' ? config.offsetTopPx : 96, config.behavior || 'smooth');
     node.classList.remove('print-editor-target-highlight');
     void node.offsetWidth;
     node.classList.add('print-editor-target-highlight');
@@ -1647,6 +1658,269 @@
   function findRenderedBreakNode(candidate) {
     if (!candidate) return null;
     return document.querySelector('.pagedjs_pages [data-print-break-id="' + candidate.id + '"]') || candidate.node;
+  }
+
+  function clampNumber(value, min, max) {
+    var parsed = Number(value);
+    if (!isFinite(parsed)) return min;
+    if (parsed < min) return min;
+    if (parsed > max) return max;
+    return parsed;
+  }
+
+  function scrollNodeToOffset(node, offsetTopPx, behavior) {
+    if (!node || !node.getBoundingClientRect) return;
+    var rect = node.getBoundingClientRect();
+    var currentTop = window.scrollY || window.pageYOffset || 0;
+    var desiredOffset = clampNumber(offsetTopPx, 48, Math.max(96, (window.innerHeight || 720) - 96));
+    window.scrollTo({
+      top: Math.max(0, currentTop + rect.top - desiredOffset),
+      behavior: behavior || 'auto'
+    });
+  }
+
+  function findCandidateByPersistId(persistId) {
+    if (!persistId) return null;
+    return breakCandidates.find(function (candidate) {
+      return candidate && candidate.node && candidate.node.dataset && candidate.node.dataset.printPersistId === persistId;
+    }) || null;
+  }
+
+  function currentSelectedTarget() {
+    return {
+      kind: String(selectedTargetState.kind || ''),
+      candidate_id: String(selectedTargetState.candidateId || ''),
+      persist_id: String(selectedTargetState.persistId || ''),
+      page_number: parseInt(selectedTargetState.pageNumber || '0', 10) || 0,
+      has_selection: !!(selectedTargetState.candidateId || selectedTargetState.persistId)
+    };
+  }
+
+  function clearSelectedRenderedState() {
+    Array.from(document.querySelectorAll('.print-selected-target')).forEach(function (node) {
+      node.classList.remove('print-selected-target');
+    });
+  }
+
+  function currentSelectedRenderedNode() {
+    if (selectedTargetState.kind === 'image' && selectedTargetState.persistId) {
+      var imageNode = persistedNodeById(selectedTargetState.persistId);
+      if (imageNode) return imageNode;
+    }
+    if (selectedTargetState.candidateId) {
+      var candidateNode = findRenderedCandidateNode(selectedTargetState.candidateId);
+      if (candidateNode) return candidateNode;
+    }
+    if (selectedTargetState.persistId) {
+      return persistedNodeById(selectedTargetState.persistId);
+    }
+    return null;
+  }
+
+  function syncSelectedRenderedState() {
+    clearSelectedRenderedState();
+    var targetNode = currentSelectedRenderedNode();
+    if (targetNode && targetNode.classList) {
+      targetNode.classList.add('print-selected-target');
+    }
+    if (editorBlockSelect && selectedTargetState.candidateId) {
+      editorBlockSelect.value = selectedTargetState.candidateId;
+    }
+  }
+
+  function setSelectedTarget(nextState, options) {
+    var config = options || {};
+    var normalized = nextState || {};
+    selectedTargetState = {
+      kind: String(normalized.kind || ''),
+      candidateId: String(normalized.candidateId || ''),
+      persistId: String(normalized.persistId || ''),
+      pageNumber: parseInt(normalized.pageNumber || '0', 10) || 0
+    };
+    if (!selectedTargetState.candidateId && selectedTargetState.persistId) {
+      var fallbackCandidate = findCandidateByPersistId(selectedTargetState.persistId);
+      if (fallbackCandidate) {
+        selectedTargetState.candidateId = fallbackCandidate.id;
+      }
+    }
+    syncSelectedRenderedState();
+    if (!config.silent && selectedTargetState.persistId) {
+      updateEditorBannerStatus('선택한 블록을 기준으로 편집합니다');
+    }
+  }
+
+  function clearSelectedTarget(options) {
+    setSelectedTarget({ kind: '', candidateId: '', persistId: '', pageNumber: 0 }, options || { silent: true });
+  }
+
+  function setSelectedCandidate(candidate, options) {
+    if (!candidate) {
+      clearSelectedTarget(options);
+      return;
+    }
+    setSelectedTarget({
+      kind: 'block',
+      candidateId: candidate.id,
+      persistId: candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '',
+      pageNumber: pageNumberForRenderedCandidate(candidate.id)
+    }, options);
+  }
+
+  function setSelectedPersistedNode(node, kind, options) {
+    if (!node || !node.dataset) {
+      clearSelectedTarget(options);
+      return;
+    }
+    var persistId = node.dataset.printPersistId || '';
+    var candidate = findCandidateByPersistId(persistId);
+    setSelectedTarget({
+      kind: String(kind || 'block'),
+      candidateId: candidate ? candidate.id : '',
+      persistId: persistId,
+      pageNumber: pageNumberFromNode(closestRenderedPageNode(node))
+    }, options);
+  }
+
+  function selectionForNode(node) {
+    if (!node || !node.closest) return null;
+    var image = node.closest('figure.image[data-print-persist-id]');
+    if (image) {
+      return {
+        kind: 'image',
+        candidateId: '',
+        persistId: image.dataset && image.dataset.printPersistId ? image.dataset.printPersistId : '',
+        pageNumber: pageNumberFromNode(closestRenderedPageNode(image))
+      };
+    }
+    var candidateNode = node.closest('[data-print-break-id]');
+    if (candidateNode) {
+      var candidateId = candidateNode.getAttribute('data-print-break-id') || '';
+      var candidate = findCandidateById(candidateId);
+      return {
+        kind: 'block',
+        candidateId: candidateId,
+        persistId: candidateNode.getAttribute('data-print-persist-id') || (candidate && candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : ''),
+        pageNumber: pageNumberFromNode(closestRenderedPageNode(candidateNode))
+      };
+    }
+    var persistedNode = node.closest('[data-print-persist-id]');
+    if (!persistedNode) return null;
+    var fallbackCandidate = findCandidateByPersistId(persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '');
+    return {
+      kind: 'block',
+      candidateId: fallbackCandidate ? fallbackCandidate.id : '',
+      persistId: persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '',
+      pageNumber: pageNumberFromNode(closestRenderedPageNode(persistedNode))
+    };
+  }
+
+  function isInteractiveCanvasTarget(node) {
+    return !!(node && node.closest && node.closest('a, button, input, textarea, select, label, .print-page-action-group, .print-insert-actions, .print-inline-tools, .print-image-tools, .print-editor-banner, .print-editor-panel'));
+  }
+
+  function captureViewportAnchor(options) {
+    var config = options || {};
+    var explicitNode = config.preferredNode || null;
+    var anchorNode = explicitNode || currentSelectedRenderedNode() || nearestRenderedCandidateToViewport() || visibleRenderedPageNode();
+    var rect = anchorNode && anchorNode.getBoundingClientRect ? anchorNode.getBoundingClientRect() : null;
+    var pageNode = anchorNode && anchorNode.classList && anchorNode.classList.contains('pagedjs_page') ? anchorNode : closestRenderedPageNode(anchorNode);
+    return {
+      candidate_id: anchorNode && anchorNode.getAttribute ? anchorNode.getAttribute('data-print-break-id') || '' : '',
+      persist_id: anchorNode && anchorNode.getAttribute ? anchorNode.getAttribute('data-print-persist-id') || '' : '',
+      page_number: pageNode && pageNode.getAttribute ? pageNode.getAttribute('data-page-number') || '' : '',
+      offset_top_px: rect ? Math.round(rect.top) : null
+    };
+  }
+
+  function resolveViewportAnchorNode(anchor) {
+    if (!anchor || typeof anchor !== 'object') return null;
+    if (anchor.candidate_id) {
+      var candidateNode = findRenderedCandidateNode(anchor.candidate_id);
+      if (candidateNode) return candidateNode;
+    }
+    if (anchor.persist_id) {
+      var persistedNode = persistedNodeById(anchor.persist_id);
+      if (persistedNode) return persistedNode;
+    }
+    if (anchor.page_number) {
+      return document.querySelector('.pagedjs_pages .pagedjs_page[data-page-number="' + String(anchor.page_number) + '"]');
+    }
+    return null;
+  }
+
+  function restoreViewportAnchor(anchor, fallbackNode, options) {
+    var config = options || {};
+    var node = fallbackNode || resolveViewportAnchorNode(anchor);
+    if (!node) return false;
+    var desiredOffset = typeof config.offsetTopPx === 'number'
+      ? config.offsetTopPx
+      : (anchor && typeof anchor.offset_top_px === 'number' ? anchor.offset_top_px : 96);
+    scrollNodeToOffset(node, desiredOffset, config.behavior || 'auto');
+    if (config.highlight === false) {
+      return true;
+    }
+    if (node.classList && node.classList.contains('pagedjs_page')) {
+      node.classList.remove('print-page-target-highlight');
+      void node.offsetWidth;
+      node.classList.add('print-page-target-highlight');
+      setTimeout(function () {
+        node.classList.remove('print-page-target-highlight');
+      }, 1800);
+      return true;
+    }
+    highlightAndScrollToNode(node, { offsetTopPx: desiredOffset, behavior: config.behavior || 'smooth' });
+    return true;
+  }
+
+  function captureViewportMetrics(preferredNode) {
+    return {
+      scroll_top_px: Math.round(window.scrollY || window.pageYOffset || 0),
+      viewport_height_px: Math.round(window.innerHeight || 0),
+      viewport_width_px: Math.round(window.innerWidth || 0),
+      anchor: captureViewportAnchor({ preferredNode: preferredNode || null })
+    };
+  }
+
+  function captureRenderedNodePosition(node) {
+    if (!node || !node.getBoundingClientRect) return null;
+    var rect = node.getBoundingClientRect();
+    var pageNode = closestRenderedPageNode(node);
+    return {
+      candidate_id: node.getAttribute ? node.getAttribute('data-print-break-id') || '' : '',
+      persist_id: node.getAttribute ? node.getAttribute('data-print-persist-id') || '' : '',
+      page_number: pageNumberFromNode(pageNode),
+      viewport_top_px: Math.round(rect.top),
+      viewport_bottom_px: Math.round(rect.bottom),
+      viewport_height_px: Math.round(rect.height),
+      viewport_width_px: Math.round(rect.width)
+    };
+  }
+
+  function captureRenderedPageSnapshot(pageNode) {
+    if (!pageNode) return null;
+    var range = firstLastCandidateIdsInPage(pageNode);
+    return {
+      page_number: pageNode.getAttribute('data-page-number') || '',
+      first_candidate_id: range.first || '',
+      last_candidate_id: range.last || '',
+      candidate_count: pageNode.querySelectorAll('[data-print-break-id]').length,
+      persist_count: pageNode.querySelectorAll('[data-print-persist-id]').length
+    };
+  }
+
+  function buildRuntimeActionMeta(targetNode, extra) {
+    var pageNode = closestRenderedPageNode(targetNode) || visibleRenderedPageNode();
+    return Object.assign({
+      viewport_before: captureViewportMetrics(targetNode),
+      focus_before: currentSelectedTarget(),
+      target_before: captureRenderedNodePosition(targetNode),
+      page_before: captureRenderedPageSnapshot(pageNode)
+    }, extra || {});
+  }
+
+  function activeEditableId() {
+    var active = document.activeElement;
+    return active && active.dataset ? active.dataset.printEditId || '' : '';
   }
 
   function closestRenderedPageNode(node) {
@@ -1708,17 +1982,26 @@
       (fallbackNode && fallbackNode.getAttribute && fallbackNode.getAttribute('data-print-persist-id')) ||
       persistedIdFromCandidateId(candidateId) || '';
     var pageNumber = config.pageNumber || (pageNode && pageNode.getAttribute ? (pageNode.getAttribute('data-page-number') || '') : '');
+    var targetOffsetPx = typeof config.targetOffsetPx === 'number'
+      ? config.targetOffsetPx
+      : (explicitNode && explicitNode.getBoundingClientRect ? Math.round(explicitNode.getBoundingClientRect().top) : 96);
     return {
       at: Date.now(),
       candidate_id: String(candidateId || ''),
       persist_id: String(persistId || ''),
       page_number: String(pageNumber || ''),
-      intent: String(config.intent || '')
+      intent: String(config.intent || ''),
+      action_event_id: String(config.actionEventId || lastLearningActionEventId() || ''),
+      target_offset_px: clampNumber(targetOffsetPx, 56, Math.max(96, (window.innerHeight || 720) - 96)),
+      viewport_anchor: captureViewportAnchor({ preferredNode: fallbackNode || pageNode || null }),
+      selection: currentSelectedTarget(),
+      layout_before: snapshotRenderedLayout()
     };
   }
 
   function reloadWithPreservedFocus(options) {
-    writeStoredReloadFocus(buildReloadFocusPayload(options));
+    var payload = buildReloadFocusPayload(options || {});
+    writeStoredReloadFocus(payload);
     setTimeout(function () {
       window.location.reload();
     }, 120);
@@ -1734,6 +2017,7 @@
     }
 
     var targetNode = null;
+    var restoreMode = '';
     if (pending.candidate_id) {
       targetNode = document.querySelector('.pagedjs_pages [data-print-break-id="' + pending.candidate_id + '"]');
     }
@@ -1744,10 +2028,97 @@
       document.body.dataset.printReloadFocusRestored = 'true';
       clearStoredReloadFocus();
       setTimeout(function () {
-        highlightAndScrollToNode(targetNode);
+        restoreMode = 'target';
+        setSelectedTarget(selectionForNode(targetNode) || {
+          kind: 'block',
+          candidateId: pending.candidate_id || '',
+          persistId: pending.persist_id || '',
+          pageNumber: pageNumberFromNode(closestRenderedPageNode(targetNode))
+        }, { silent: true });
+        highlightAndScrollToNode(targetNode, {
+          offsetTopPx: typeof pending.target_offset_px === 'number' ? pending.target_offset_px : 96
+        });
+        logLearningAction('layout_reflow', {
+          targetNode: targetNode,
+          candidateId: pending.candidate_id || '',
+          persistId: pending.persist_id || '',
+          before: {
+            requested_event_id: pending.action_event_id || '',
+            requested_page_number: parseInt(pending.page_number || '0', 10) || 0,
+            requested_intent: pending.intent || ''
+          },
+          after: {
+            restored: true,
+            landed_page_number: pageNumberFromNode(closestRenderedPageNode(targetNode)),
+            page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+          },
+          ui: {
+            source: 'reload_focus_restore',
+            suggestion_source: 'system'
+          },
+          meta: {
+            restore_mode: restoreMode,
+            requested_focus: pending,
+            layout_effect: diffRenderedLayouts(pending.layout_before, snapshotRenderedLayout()),
+            viewport_after: captureViewportMetrics(targetNode),
+            focus_after: currentSelectedTarget()
+          }
+        });
         updateEditorBannerStatus('방금 수정한 위치로 돌아왔습니다');
       }, 90);
       return true;
+    }
+
+    if (pending.viewport_anchor) {
+      var anchorNode = resolveViewportAnchorNode(pending.viewport_anchor);
+      if (anchorNode) {
+        document.body.dataset.printReloadFocusRestored = 'true';
+        clearStoredReloadFocus();
+        setTimeout(function () {
+          restoreMode = 'anchor';
+          restoreViewportAnchor(pending.viewport_anchor, anchorNode, {
+            offsetTopPx: typeof pending.target_offset_px === 'number' ? pending.target_offset_px : 96,
+            behavior: 'smooth',
+            highlight: true
+          });
+          if (pending.selection && pending.selection.persist_id) {
+            setSelectedTarget({
+              kind: pending.selection.kind || 'block',
+              candidateId: pending.selection.candidate_id || '',
+              persistId: pending.selection.persist_id || '',
+              pageNumber: pending.selection.page_number || 0
+            }, { silent: true });
+          }
+          logLearningAction('layout_reflow', {
+            targetNode: anchorNode,
+            candidateId: pending.candidate_id || '',
+            persistId: pending.persist_id || '',
+            before: {
+              requested_event_id: pending.action_event_id || '',
+              requested_page_number: parseInt(pending.page_number || '0', 10) || 0,
+              requested_intent: pending.intent || ''
+            },
+            after: {
+              restored: true,
+              landed_page_number: pageNumberFromNode(closestRenderedPageNode(anchorNode)),
+              page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+            },
+            ui: {
+              source: 'reload_focus_restore',
+              suggestion_source: 'system'
+            },
+            meta: {
+              restore_mode: restoreMode,
+              requested_focus: pending,
+              layout_effect: diffRenderedLayouts(pending.layout_before, snapshotRenderedLayout()),
+              viewport_after: captureViewportMetrics(anchorNode),
+              focus_after: currentSelectedTarget()
+            }
+          });
+          updateEditorBannerStatus('방금 보던 위치로 돌아왔습니다');
+        }, 90);
+        return true;
+      }
     }
 
     if (pending.page_number) {
@@ -1756,7 +2127,40 @@
         document.body.dataset.printReloadFocusRestored = 'true';
         clearStoredReloadFocus();
         setTimeout(function () {
-          jumpToPageNumber(pending.page_number);
+          restoreMode = 'page';
+          restoreViewportAnchor({ page_number: pending.page_number, offset_top_px: 72 }, pageNode, {
+            offsetTopPx: 72,
+            behavior: 'smooth',
+            highlight: true
+          });
+          clearSelectedTarget({ silent: true });
+          logLearningAction('layout_reflow', {
+            targetNode: pageNode,
+            pageNode: pageNode,
+            pageNumber: parseInt(pending.page_number || '0', 10) || 0,
+            nodeKind: 'page',
+            before: {
+              requested_event_id: pending.action_event_id || '',
+              requested_page_number: parseInt(pending.page_number || '0', 10) || 0,
+              requested_intent: pending.intent || ''
+            },
+            after: {
+              restored: true,
+              landed_page_number: parseInt(pageNode.getAttribute('data-page-number') || '0', 10) || 0,
+              page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+            },
+            ui: {
+              source: 'reload_focus_restore',
+              suggestion_source: 'system'
+            },
+            meta: {
+              restore_mode: restoreMode,
+              requested_focus: pending,
+              layout_effect: diffRenderedLayouts(pending.layout_before, snapshotRenderedLayout()),
+              viewport_after: captureViewportMetrics(pageNode),
+              focus_after: currentSelectedTarget()
+            }
+          });
           updateEditorBannerStatus('방금 수정한 페이지로 돌아왔습니다');
         }, 90);
         return true;
@@ -1778,7 +2182,9 @@
   }
 
   function jumpToCandidate(candidate) {
-    highlightAndScrollToNode(findRenderedBreakNode(candidate));
+    if (!candidate) return;
+    setSelectedCandidate(candidate, { silent: true });
+    highlightAndScrollToNode(findRenderedBreakNode(candidate), { offsetTopPx: 96 });
   }
 
   function pageLabelText(pageNode) {
@@ -1804,6 +2210,9 @@
       });
       if (previousBlockValue) {
         editorBlockSelect.value = previousBlockValue;
+      }
+      if (selectedTargetState.candidateId) {
+        editorBlockSelect.value = selectedTargetState.candidateId;
       }
     }
 
@@ -2061,7 +2470,7 @@
       updateEditorBannerStatus('선택한 페이지를 찾지 못했습니다');
       return;
     }
-    pageNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollNodeToOffset(pageNode, 72, 'smooth');
     pageNode.classList.remove('print-page-target-highlight');
     void pageNode.offsetWidth;
     pageNode.classList.add('print-page-target-highlight');
@@ -2206,6 +2615,20 @@
     };
   }
 
+  function mergeCandidateForPage(pageNode) {
+    var range = firstLastCandidateIdsInPage(pageNode);
+    if (range.first) {
+      var directCandidate = findCandidateById(range.first);
+      if (directCandidate) return directCandidate;
+    }
+    var fallbackPersistNode = pageNode && pageNode.querySelector ? pageNode.querySelector('[data-print-persist-id]') : null;
+    if (!fallbackPersistNode || !fallbackPersistNode.dataset) return null;
+    var fallbackCandidate = findCandidateByPersistId(fallbackPersistNode.dataset.printPersistId || '');
+    if (!fallbackCandidate) return null;
+    var renderedCandidate = findRenderedBreakNode(fallbackCandidate);
+    return renderedCandidate && pageNode.contains(renderedCandidate) ? fallbackCandidate : null;
+  }
+
   function renderedFlowRootForPage(pageNode) {
     if (!pageNode || !pageNode.querySelector) return null;
     var content = pageNode.querySelector('.pagedjs_page_content');
@@ -2227,6 +2650,49 @@
         }).filter(Boolean)
       };
     });
+  }
+
+  function diffRenderedLayouts(beforeLayout, afterLayout) {
+    var beforeIndex = {};
+    var afterIndex = {};
+    (Array.isArray(beforeLayout) ? beforeLayout : []).forEach(function (pageEntry) {
+      (Array.isArray(pageEntry && pageEntry.ids) ? pageEntry.ids : []).forEach(function (candidateId, index) {
+        if (!candidateId) return;
+        beforeIndex[candidateId] = {
+          page: String(pageEntry.page || ''),
+          index: index
+        };
+      });
+    });
+    (Array.isArray(afterLayout) ? afterLayout : []).forEach(function (pageEntry) {
+      (Array.isArray(pageEntry && pageEntry.ids) ? pageEntry.ids : []).forEach(function (candidateId, index) {
+        if (!candidateId) return;
+        afterIndex[candidateId] = {
+          page: String(pageEntry.page || ''),
+          index: index
+        };
+      });
+    });
+    var moved = [];
+    Object.keys(afterIndex).forEach(function (candidateId) {
+      if (!beforeIndex[candidateId]) return;
+      if (beforeIndex[candidateId].page === afterIndex[candidateId].page && beforeIndex[candidateId].index === afterIndex[candidateId].index) return;
+      moved.push(candidateId);
+    });
+    var removed = Object.keys(beforeIndex).filter(function (candidateId) {
+      return !afterIndex[candidateId];
+    });
+    var inserted = Object.keys(afterIndex).filter(function (candidateId) {
+      return !beforeIndex[candidateId];
+    });
+    return {
+      moved_candidate_ids: moved,
+      moved_candidate_count: moved.length,
+      removed_candidate_ids: removed,
+      removed_candidate_count: removed.length,
+      inserted_candidate_ids: inserted,
+      inserted_candidate_count: inserted.length
+    };
   }
 
   function persistRenderedLayout() {
@@ -2364,19 +2830,60 @@
     return clone;
   }
 
+  function isEditorArtifactNode(node) {
+    return !!(node && node.classList && (
+      node.classList.contains('print-insert-actions') ||
+      node.classList.contains('print-page-action-group') ||
+      node.classList.contains('print-page-merge-button') ||
+      node.classList.contains('print-page-delete-button') ||
+      node.classList.contains('print-inline-tools') ||
+      node.classList.contains('print-image-tools')
+    ));
+  }
+
+  function hasMeaningfulRenderedContent(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (isEditorArtifactNode(node)) return false;
+    if (node.hasAttribute && node.hasAttribute('data-print-persist-id')) return true;
+    if (node.matches && node.matches('img, table, hr')) return true;
+    var directText = normalizePrintText(Array.from(node.childNodes || []).filter(function (child) {
+      return child.nodeType === 3;
+    }).map(function (child) {
+      return child.textContent || '';
+    }).join(' '));
+    if (directText) return true;
+    return Array.from(node.children || []).some(function (child) {
+      return hasMeaningfulRenderedContent(child);
+    });
+  }
+
   function pruneEmptyAncestors(startNode, stopRoot) {
     var current = startNode;
     while (current && current !== stopRoot) {
       var parent = current.parentElement;
-      var text = normalizePrintText(current.textContent || '');
-      var hasMeaningfulElement = Array.from(current.children || []).some(function (child) {
-        return child.nodeType === 1;
-      });
-      if (!text && !hasMeaningfulElement) {
+      if (!hasMeaningfulRenderedContent(current)) {
         current.remove();
+      } else {
+        break;
       }
       current = parent;
     }
+  }
+
+  function removeEmptyRenderedPages() {
+    var removedPages = [];
+    var pages = Array.from(document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]'));
+    pages.forEach(function (pageNode) {
+      if (document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length <= 1) return;
+      var contentRoot = renderedContentRoot(pageNode);
+      var hasContent = !!(contentRoot && Array.from(contentRoot.children || []).some(function (child) {
+        return hasMeaningfulRenderedContent(child);
+      }));
+      if (hasContent) return;
+      removedPages.push(pageNode.getAttribute('data-page-number') || '');
+      pageNode.remove();
+    });
+    return removedPages;
   }
 
   function splitRenderedPageAtNode(renderedCandidate) {
@@ -2394,7 +2901,7 @@
   }
 
   function undoLastEdit() {
-    logLearningAction('undo', {
+    var eventId = logLearningAction('undo', {
       before: {
         last_event_id: lastLearningActionEventId()
       },
@@ -2415,7 +2922,7 @@
       return;
     }
     updateEditorBannerStatus('이전 상태로 되돌리는 중…');
-    reloadWithPreservedFocus({ intent: 'undo' });
+    reloadWithPreservedFocus({ intent: 'undo', actionEventId: eventId });
   }
 
   function mergeWithPreviousPage(pageNode) {
@@ -2425,14 +2932,9 @@
       updateEditorBannerStatus('앞 페이지가 없습니다');
       return;
     }
-    var pageRange = firstLastCandidateIdsInPage(pageNode);
-    if (!pageRange.first) {
-      updateEditorBannerStatus('합칠 기준 블록을 찾지 못했습니다');
-      return;
-    }
-    var candidate = findCandidateById(pageRange.first);
+    var candidate = mergeCandidateForPage(pageNode);
     if (!candidate) {
-      updateEditorBannerStatus('합칠 기준 블록을 찾지 못했습니다');
+      updateEditorBannerStatus('이 페이지는 현재 이어붙일 기준 블록을 찾지 못했습니다');
       return;
     }
     var currentMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
@@ -2440,8 +2942,9 @@
     var gapId = candidate && candidate.node && candidate.node.dataset ? (candidate.node.dataset.printBreakId || candidate.node.dataset.printPersistId || '') : '';
     var currentGapUnits = gapId ? (parseInt(manualGapMap[gapId] || '0', 10) || 0) : 0;
     var renderedNode = findRenderedBreakNode(candidate) || candidate.node;
+    var beforeLayout = snapshotRenderedLayout();
     pushHistorySnapshot('merge-page');
-    logLearningAction('set_break_mode', {
+    var eventId = logLearningAction('set_break_mode', {
       targetNode: renderedNode,
       candidateId: candidate.id,
       before: {
@@ -2459,13 +2962,21 @@
         source: 'page_merge_button',
         suggestion_source: 'manual'
       },
-      meta: {
-        intent: 'merge_with_previous_page'
-      }
+      meta: buildRuntimeActionMeta(renderedNode, {
+        intent: 'merge_with_previous_page',
+        effect: {
+          merge_with_previous_page: true,
+          cleared_gap_units: currentGapUnits,
+          cleared_space_mode: currentSpaceMode,
+          previous_page_number: previousPage.getAttribute('data-page-number') || '',
+          current_page_number: pageNode.getAttribute('data-page-number') || '',
+          layout_before: beforeLayout
+        }
+      })
     });
     candidate.node.dataset.printBreakMode = 'auto';
     delete breakOverrideMap[candidate.id];
-    if (currentSpaceMode === 'wide') {
+    if (currentSpaceMode !== 'auto') {
       candidate.node.dataset.printSpaceMode = 'auto';
       delete spaceOverrideMap[candidate.id];
     }
@@ -2486,7 +2997,8 @@
       targetNode: renderedNode,
       candidateId: candidate.id,
       persistId: candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '',
-      intent: 'merge_with_previous_page'
+      intent: 'merge_with_previous_page',
+      actionEventId: eventId
     });
   }
 
@@ -2501,6 +3013,8 @@
     var pageNumber = parseInt(pageNode.getAttribute('data-page-number') || '0', 10) || 0;
     var previousPage = pageNode.previousElementSibling;
     var nextPage = pageNode.nextElementSibling;
+    var previousPageRange = firstLastCandidateIdsInPage(previousPage);
+    var nextPageRange = firstLastCandidateIdsInPage(nextPage);
     var candidateIds = uniqueTruthyStrings(Array.from(pageNode.querySelectorAll('[data-print-break-id]')).map(function (node) {
       return node.getAttribute('data-print-break-id') || '';
     }));
@@ -2510,8 +3024,12 @@
       return;
     }
 
-    logLearningAction('delete_page', {
+    var fallbackCandidateId = previousPageRange.last || nextPageRange.first || '';
+    var fallbackPersistId = persistedIdFromCandidateId(fallbackCandidateId) || '';
+    var fallbackNode = fallbackCandidateId ? findRenderedCandidateNode(fallbackCandidateId) : null;
+    var eventId = logLearningAction('delete_page', {
       pageNode: pageNode,
+      targetNode: pageNode,
       pageNumber: pageNumber,
       nodeKind: 'page',
       before: {
@@ -2525,23 +3043,35 @@
         source: 'page_delete_button',
         suggestion_source: 'manual'
       },
-      meta: {
+      meta: buildRuntimeActionMeta(pageNode, {
         candidate_ids: candidateIds,
-        persist_ids: persistIds
-      }
+        persist_ids: persistIds,
+        intent: 'delete_page',
+        effect: {
+          deleted_page_number: pageNumber,
+          fallback_candidate_id: fallbackCandidateId,
+          fallback_persist_id: fallbackPersistId,
+          layout_before: snapshotRenderedLayout()
+        }
+      })
     });
     pushHistorySnapshot('delete-page');
     persistIds.forEach(function (persistId) {
       deletedNodeMap[persistId] = true;
     });
     writeStoredDeletedNodes();
+    clearStateForDeletedPersistIds(persistIds);
     clearRenderedOrderStorage();
     flushLearningEvents(true);
     updateEditorBannerStatus('페이지와 해당 내용을 삭제하는 중…');
     reloadWithPreservedFocus({
+      targetNode: fallbackNode,
+      candidateId: fallbackCandidateId,
+      persistId: fallbackPersistId,
       pageNode: previousPage || nextPage || null,
       pageNumber: previousPage ? (previousPage.getAttribute('data-page-number') || '') : (nextPage ? (nextPage.getAttribute('data-page-number') || '') : String(Math.max(1, pageNumber - 1))),
-      intent: 'delete_page'
+      intent: 'delete_page',
+      actionEventId: eventId
     });
   }
 
@@ -2552,7 +3082,7 @@
     var suggestionSource = suggestionSourceForBreak(candidate, nextMode);
     var renderedNode = findRenderedBreakNode(candidate) || candidate.node;
     pushHistorySnapshot('break-mode');
-    logLearningAction('set_break_mode', {
+    var eventId = logLearningAction('set_break_mode', {
       targetNode: renderedNode,
       candidateId: candidate.id,
       before: {
@@ -2566,9 +3096,13 @@
         source: uiSource || 'editor_panel',
         suggestion_source: suggestionSource
       },
-      meta: {
-        intent: intent || ''
-      }
+      meta: buildRuntimeActionMeta(renderedNode, {
+        intent: intent || '',
+        effect: {
+          requested_break_mode: nextMode,
+          layout_before: snapshotRenderedLayout()
+        }
+      })
     });
     setCandidateMode(candidate, nextMode);
     flushLearningEvents(true);
@@ -2577,7 +3111,8 @@
       targetNode: renderedNode,
       candidateId: candidate.id,
       persistId: candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '',
-      intent: intent || 'break_toggle'
+      intent: intent || 'break_toggle',
+      actionEventId: eventId
     });
   }
 
@@ -2677,6 +3212,39 @@
         node.appendChild(insertBar);
       }
 
+      if (!directChildByClass(node, 'print-inline-tools')) {
+        var inlineTools = document.createElement('span');
+        inlineTools.className = 'print-inline-tools';
+
+        var inlineDelete = document.createElement('button');
+        inlineDelete.type = 'button';
+        inlineDelete.className = 'print-inline-tool is-danger';
+        inlineDelete.textContent = 'X';
+        inlineDelete.title = '이 블록 삭제';
+        inlineDelete.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          var targetCandidate = findCandidateById(candidateId);
+          if (!targetCandidate) return;
+          setSelectedCandidate(targetCandidate, { silent: true });
+          deleteCandidateNode(targetCandidate, 'inline_delete_button');
+        });
+        inlineTools.appendChild(inlineDelete);
+
+        node.appendChild(inlineTools);
+      }
+
+      if (!node.dataset.printSelectionBound) {
+        node.dataset.printSelectionBound = 'true';
+        node.addEventListener('click', function (event) {
+          if (isInteractiveCanvasTarget(event.target)) return;
+          var targetSelection = selectionForNode(node);
+          if (!targetSelection) return;
+          setSelectedTarget(targetSelection, { silent: true });
+          event.stopPropagation();
+        });
+      }
+
       insertedHandles += 1;
     });
 
@@ -2768,6 +3336,7 @@
       deleteButton.addEventListener('click', function (event) {
         event.preventDefault();
         event.stopPropagation();
+        setSelectedPersistedNode(figure, 'image', { silent: true });
         deletePersistedNodeLive(figure, figureId, '이미지를 삭제했습니다', 'image_tools', 'image');
       });
       actionRow.appendChild(deleteButton);
@@ -2820,6 +3389,7 @@
             event.stopPropagation();
             return;
           }
+          setSelectedPersistedNode(figure, 'image', { silent: true });
           var anchor = event.target && event.target.closest('a');
           if (anchor && figure.contains(anchor)) {
             event.preventDefault();
@@ -2843,6 +3413,17 @@
         closeImageToolPanels();
       });
     }
+
+    if (!document.body.dataset.printSelectionGlobalBound) {
+      document.body.dataset.printSelectionGlobalBound = 'true';
+      document.addEventListener('pointerdown', function (event) {
+        if (!event || !event.target || !event.target.closest) return;
+        if (event.target.closest('.pagedjs_pages [data-print-break-id], figure.image[data-print-persist-id], .print-editor-banner, .print-editor-panel')) return;
+        clearSelectedTarget({ silent: true });
+      });
+    }
+
+    syncSelectedRenderedState();
 
     var ready = insertedHandles > 0 || !!pagesRoot.querySelector('.print-insert-actions');
     updateEditorBannerStatus(ready ? '페이지 나누기/빈공간/합치기 준비됨' : '페이지 미리보기 준비 중');
@@ -2976,6 +3557,7 @@
       '  body.print-ready .print-editor-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;}',
       '  body.print-ready .print-editor-empty{padding:14px;border:1px dashed rgba(148,163,184,0.38);border-radius:14px;background:#f8fafc;font-size:0.84rem;line-height:1.55;color:#64748b;}',
       '  body.print-ready .print-editor-item{border:1px solid rgba(39,41,46,0.12);border-radius:14px;padding:12px;background:#fff;}',
+      '  body.print-ready .print-editor-item.is-selected{border-color:rgba(37,99,235,0.34);box-shadow:0 0 0 2px rgba(37,99,235,0.12);}',
       '  body.print-ready .print-editor-item.print-mode-force{border-color:rgba(47,111,237,0.4);background:rgba(47,111,237,0.05);}',
       '  body.print-ready .print-editor-item.print-mode-keep{border-color:rgba(148,163,184,0.38);background:rgba(248,250,252,0.92);}',
       '  body.print-ready .print-editor-item.is-recommended{box-shadow:0 0 0 2px rgba(191,219,254,0.7);}',
@@ -3016,9 +3598,12 @@
       '  body.print-ready .print-inline-dropzone.is-over{min-height:36px;height:36px;margin:6px 0 10px;}',
       '  body.print-ready .print-draggable-candidate{position:relative;}',
       '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(47,111,237,0.18);outline-offset:6px;border-radius:10px;}',
+      '  body.print-ready .print-selected-target{outline:2px solid rgba(37,99,235,0.34)!important;outline-offset:6px;border-radius:12px;box-shadow:0 0 0 4px rgba(37,99,235,0.08)!important;}',
       '  body.print-ready .print-draggable-candidate.is-dragging{opacity:0.72;}',
-      '  body.print-ready .print-inline-tools{position:absolute;top:-8px;right:-8px;display:flex;gap:4px;z-index:8;}',
+      '  body.print-ready .print-inline-tools{position:absolute;top:-8px;right:-8px;display:flex;gap:4px;z-index:8;opacity:0;transform:translateY(-4px);pointer-events:none;transition:opacity 120ms ease,transform 120ms ease;}',
+      '  body.print-ready .print-draggable-candidate:hover > .print-inline-tools, body.print-ready .print-draggable-candidate.print-selected-target > .print-inline-tools, body.print-ready figure.image.print-selected-target > .print-inline-tools{opacity:1;transform:translateY(0);pointer-events:auto;}',
       '  body.print-ready .print-inline-tool{display:inline-flex!important;align-items:center;justify-content:center;min-width:24px;height:24px;border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:0 6px;background:rgba(255,255,255,0.96);color:#111827;font:inherit;font-size:0.72rem;font-weight:800;cursor:pointer;box-shadow:0 6px 12px rgba(17,24,39,0.08);}',
+      '  body.print-ready .print-inline-tool.is-danger{color:#7f1d1d;border-color:rgba(127,29,29,0.2);}',
       '  body.print-ready .print-image-tools{position:absolute;top:50%;left:50%;display:flex;flex-direction:column;gap:8px;width:min(280px, calc(100vw - 40px));max-width:calc(100vw - 40px);padding:10px 12px;border:1px solid rgba(17,24,39,0.14);border-radius:14px;background:rgba(255,255,255,0.98);color:#111827;box-shadow:0 12px 26px rgba(17,24,39,0.16);z-index:8;opacity:0;transform:translate(-50%,-50%) scale(0.96);transition:opacity 140ms ease,transform 140ms ease;pointer-events:none;}',
       '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-tools, body.print-ready figure.image[data-print-persist-id]:focus-within .print-image-tools, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-tools{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto;}',
       '  body.print-ready .print-image-tools-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.72rem;font-weight:800;letter-spacing:0.01em;color:#475569;}',
@@ -3075,6 +3660,13 @@
       if (event.key === 'r' || event.key === 'R') {
         event.preventDefault();
         jumpToRecommendedItem();
+        return;
+      }
+
+      if (event.key === 'Delete') {
+        if (deleteSelectedTarget('keyboard_delete')) {
+          event.preventDefault();
+        }
         return;
       }
 
@@ -3172,6 +3764,7 @@
       var hasManualEdit = candidateHasManualEdit(candidate);
       var item = document.createElement('div');
       item.className = 'print-editor-item print-mode-' + mode;
+      if (selectedTargetState.candidateId === candidate.id) item.classList.add('is-selected');
       if (hasOutstandingRecommendation) item.classList.add('is-recommended');
       if (hasManualEdit) item.classList.add('is-manual');
 
@@ -3324,7 +3917,12 @@
       ui: {
         source: uiSource || 'editor_panel',
         suggestion_source: 'manual'
-      }
+      },
+      meta: buildRuntimeActionMeta(renderedNode, {
+        effect: {
+          requested_space_mode: nextMode
+        }
+      })
     });
     candidate.node.dataset.printSpaceMode = nextMode;
 
@@ -3360,7 +3958,12 @@
       ui: {
         source: uiSource || 'inline_button',
         suggestion_source: suggestionSource
-      }
+      },
+      meta: buildRuntimeActionMeta(renderedNode, {
+        effect: {
+          gap_delta: delta
+        }
+      })
     });
     if (next <= 0) {
       delete manualGapMap[gapId];
@@ -3394,7 +3997,12 @@
       ui: {
         source: uiSource || 'image_slider',
         suggestion_source: suggestionSource
-      }
+      },
+      meta: buildRuntimeActionMeta(figure, {
+        effect: {
+          scale_delta: nextLevel - currentLevel
+        }
+      })
     });
     if (nextLevel >= 100) {
       delete imageScaleMap[figureId];
@@ -3412,44 +4020,197 @@
     setFigureScale(figureId, current + (delta * 6), 'image_nudge');
   }
 
+  function candidateIdsForPersistIds(persistIds) {
+    var allowed = {};
+    uniqueTruthyStrings(persistIds || []).forEach(function (persistId) {
+      allowed[persistId] = true;
+    });
+    return uniqueTruthyStrings(breakCandidates.map(function (candidate) {
+      var candidatePersistId = candidate && candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '';
+      return allowed[candidatePersistId] ? candidate.id : '';
+    }));
+  }
+
+  function collectEditableIdsForPersistIds(persistIds) {
+    return uniqueTruthyStrings(uniqueTruthyStrings(persistIds || []).reduce(function (ids, persistId) {
+      return ids.concat(Array.from(document.querySelectorAll('[data-print-persist-id="' + persistId + '"] [data-print-edit-id], [data-print-persist-id="' + persistId + '"][data-print-edit-id]')).map(function (node) {
+        return node && node.dataset ? node.dataset.printEditId || '' : '';
+      }));
+    }, []));
+  }
+
+  function clearStateForDeletedPersistIds(persistIds) {
+    var removedPersistIds = uniqueTruthyStrings(persistIds || []);
+    if (!removedPersistIds.length) return;
+    var removedEditableIds = collectEditableIdsForPersistIds(removedPersistIds);
+
+    breakCandidates.forEach(function (candidate) {
+      var candidatePersistId = candidate && candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '';
+      if (removedPersistIds.indexOf(candidatePersistId) === -1) return;
+      var gapKey = candidate && candidate.node && candidate.node.dataset ? (candidate.node.dataset.printBreakId || candidate.node.dataset.printPersistId || '') : '';
+      if (gapKey) delete manualGapMap[gapKey];
+      delete breakOverrideMap[candidate.id];
+      delete spaceOverrideMap[candidate.id];
+      delete pullUpOverrideMap[candidate.id];
+    });
+
+    removedPersistIds.forEach(function (persistId) {
+      delete manualGapMap[persistId];
+      delete imageScaleMap[persistId];
+    });
+
+    removedEditableIds.forEach(function (editId) {
+      delete textOverrideMap[editId];
+    });
+
+    writeStoredBreakOverrides();
+    writeStoredSpaceOverrides();
+    writeStoredPullUpOverrides();
+    writeStoredGaps();
+    writeStoredImageScales();
+    writeStoredTextOverrides();
+  }
+
+  function nextSelectionAfterDelete(node, persistId) {
+    var currentCandidateId = node && node.getAttribute ? node.getAttribute('data-print-break-id') || '' : '';
+    if (!currentCandidateId) {
+      var fallbackCandidate = findCandidateByPersistId(persistId);
+      currentCandidateId = fallbackCandidate ? fallbackCandidate.id : '';
+    }
+    var renderedCandidates = Array.from(document.querySelectorAll('.pagedjs_pages [data-print-break-id]'));
+    var currentIndex = currentCandidateId ? renderedCandidates.findIndex(function (candidateNode) {
+      return (candidateNode.getAttribute('data-print-break-id') || '') === currentCandidateId;
+    }) : -1;
+
+    var nextNode = currentIndex >= 0 ? renderedCandidates.slice(currentIndex + 1).find(function (candidateNode) {
+      return (candidateNode.getAttribute('data-print-persist-id') || '') !== persistId;
+    }) : null;
+    var previousNode = currentIndex > 0 ? renderedCandidates.slice(0, currentIndex).reverse().find(function (candidateNode) {
+      return (candidateNode.getAttribute('data-print-persist-id') || '') !== persistId;
+    }) : null;
+    return selectionForNode(nextNode || previousNode || null);
+  }
+
+  function removePersistedNodesFromRenderedPreview(persistIds) {
+    var removedParents = [];
+    uniqueTruthyStrings(persistIds || []).forEach(function (persistId) {
+      Array.from(document.querySelectorAll('[data-print-persist-id="' + persistId + '"]')).forEach(function (target) {
+        removedParents.push({
+          parent: target.parentElement,
+          pageRoot: closestRenderedPageNode(target)
+        });
+        target.remove();
+      });
+    });
+    removedParents.forEach(function (entry) {
+      if (!entry || !entry.parent) return;
+      pruneEmptyAncestors(entry.parent, entry.pageRoot || renderedPagesRoot());
+    });
+  }
+
   function deletePersistedNodeLive(node, persistId, statusMessage, uiSource, nodeKindOverride) {
     if (!node || !persistId) return;
+    var beforeLayout = snapshotRenderedLayout();
+    var beforeMeta = buildRuntimeActionMeta(node, {
+      document_before: {
+        page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+      }
+    });
+    var nextSelection = nextSelectionAfterDelete(node, persistId);
+    var removedCandidateIds = candidateIdsForPersistIds([persistId]);
+    var anchorBefore = beforeMeta.viewport_before && beforeMeta.viewport_before.anchor ? beforeMeta.viewport_before.anchor : captureViewportAnchor({ preferredNode: node });
     pushRenderedHistorySnapshot();
     pushHistorySnapshot('delete-node');
+    deletedNodeMap[persistId] = true;
+    writeStoredDeletedNodes();
+    clearStateForDeletedPersistIds([persistId]);
+    removePersistedNodesFromRenderedPreview([persistId]);
+    closeImageToolPanels();
+    var removedPages = removeEmptyRenderedPages();
+    renumberRenderedPages();
+    installDirectPageManipulation();
+    if (nextSelection) {
+      setSelectedTarget(nextSelection, { silent: true });
+    } else {
+      clearSelectedTarget({ silent: true });
+    }
+    var preferredNode = currentSelectedRenderedNode() || resolveViewportAnchorNode(anchorBefore);
+    restoreViewportAnchor(anchorBefore, preferredNode, {
+      behavior: 'auto',
+      highlight: false,
+      offsetTopPx: anchorBefore && typeof anchorBefore.offset_top_px === 'number' ? anchorBefore.offset_top_px : 96
+    });
+    refreshNavigatorOptions();
+    refreshEditorList();
+    var afterLayout = snapshotRenderedLayout();
     logLearningAction('delete_node', {
       targetNode: node,
       persistId: persistId,
+      candidateId: removedCandidateIds[0] || '',
+      pageNumber: beforeMeta.page_before && beforeMeta.page_before.page_number ? beforeMeta.page_before.page_number : 0,
       nodeKind: nodeKindOverride || learningNodeKind(node),
       before: {
-        exists: true
+        exists: true,
+        page_number: beforeMeta.page_before && beforeMeta.page_before.page_number ? beforeMeta.page_before.page_number : 0
       },
       after: {
-        deleted: true
+        deleted: true,
+        page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length,
+        replacement_candidate_id: nextSelection && nextSelection.candidateId ? nextSelection.candidateId : '',
+        replacement_persist_id: nextSelection && nextSelection.persistId ? nextSelection.persistId : ''
       },
       ui: {
         source: uiSource || 'editor_panel',
         suggestion_source: 'manual'
-      }
+      },
+      meta: Object.assign({}, beforeMeta, {
+        viewport_after: captureViewportMetrics(preferredNode),
+        focus_after: currentSelectedTarget(),
+        target_after: captureRenderedNodePosition(preferredNode),
+        page_after: captureRenderedPageSnapshot(closestRenderedPageNode(preferredNode)),
+        effect: {
+          deleted_persist_ids: [persistId],
+          removed_candidate_ids: removedCandidateIds,
+          removed_page_numbers: removedPages,
+          layout_effect: diffRenderedLayouts(beforeLayout, afterLayout)
+        }
+      })
     });
-    deletedNodeMap[persistId] = true;
-    writeStoredDeletedNodes();
-    Array.from(document.querySelectorAll('[data-print-persist-id]')).forEach(function (target) {
-      var targetId = target.dataset && target.dataset.printPersistId ? target.dataset.printPersistId : '';
-      if (targetId !== persistId) return;
-      target.remove();
-    });
-    closeImageToolPanels();
-    renumberRenderedPages();
-    installDirectPageManipulation();
-    refreshNavigatorOptions();
-    refreshEditorList();
     updateEditorBannerStatus(statusMessage || '요소를 삭제했습니다');
+    return true;
   }
 
-  function deleteCandidateNode(candidate) {
+  function deleteCandidateNode(candidate, uiSource) {
     var persistId = candidate && candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId : '';
-    if (!persistId) return;
-    deletePersistedNodeLive(findRenderedBreakNode(candidate) || candidate.node, persistId, '요소를 삭제했습니다', 'editor_panel', 'block');
+    if (!persistId) return false;
+    return deletePersistedNodeLive(findRenderedBreakNode(candidate) || candidate.node, persistId, '요소를 삭제했습니다', uiSource || 'editor_panel', 'block');
+  }
+
+  function deleteSelectedTarget(uiSource) {
+    var selection = currentSelectedTarget();
+    if (!selection.has_selection) {
+      updateEditorBannerStatus('먼저 삭제할 블록을 선택하세요');
+      return false;
+    }
+    if (selection.kind === 'image' && selection.persist_id) {
+      var imageNode = persistedNodeById(selection.persist_id);
+      if (!imageNode) {
+        clearSelectedTarget({ silent: true });
+        return false;
+      }
+      return deletePersistedNodeLive(imageNode, selection.persist_id, '이미지를 삭제했습니다', uiSource || 'keyboard_delete', 'image');
+    }
+    var candidate = selection.candidate_id ? findCandidateById(selection.candidate_id) : findCandidateByPersistId(selection.persist_id);
+    if (!candidate) {
+      var fallbackNode = selection.persist_id ? persistedNodeById(selection.persist_id) : null;
+      if (!fallbackNode || !selection.persist_id) {
+        clearSelectedTarget({ silent: true });
+        updateEditorBannerStatus('선택한 블록을 찾지 못했습니다');
+        return false;
+      }
+      return deletePersistedNodeLive(fallbackNode, selection.persist_id, '요소를 삭제했습니다', uiSource || 'keyboard_delete', 'block');
+    }
+    return deleteCandidateNode(candidate, uiSource || 'keyboard_delete');
   }
 
   function buildEditorPanel() {
@@ -3482,7 +4243,7 @@
     bannerRefresh.className = 'print-editor-banner-button is-primary';
     bannerRefresh.textContent = '미리보기 다시 계산';
     bannerRefresh.addEventListener('click', function () {
-      reloadWithPreservedFocus({ intent: 'refresh_preview' });
+      reloadWithPreservedFocus({ intent: 'refresh_preview', actionEventId: '' });
     });
     editorBanner.appendChild(bannerRefresh);
 
@@ -3915,32 +4676,6 @@
     siblings.forEach(function (node) {
       body.appendChild(node);
     });
-  });
-
-  Object.keys(pullUpOverrideMap || {}).forEach(function (candidateId) {
-    if (!pullUpOverrideMap[candidateId]) return;
-    var persistId = persistedIdFromCandidateId(candidateId);
-    if (!persistId) return;
-    var title = document.querySelector('[data-print-persist-id="' + persistId + '"]');
-    if (!title || title.dataset.printBlockType !== 'list_item_heading') return;
-    if (title.dataset.printPullUpDetached === 'done') return;
-    var listItem = title.closest('li.print-major-item');
-    if (!listItem || !listItem.parentElement) return;
-    var list = listItem.parentElement;
-    var host = list.parentElement;
-    if (!host) return;
-    var detachedHost = document.createElement('div');
-    detachedHost.className = 'print-merge-detached-title-host';
-    detachedHost.dataset.printPullUpDetachedFor = candidateId;
-    host.insertBefore(detachedHost, list);
-    detachedHost.appendChild(title);
-    title.dataset.printPullUpDetached = 'done';
-    title.classList.add('print-merge-detached-title');
-    listItem.classList.add('print-merge-detached-item', 'print-breakable-item');
-    var body = directChildByClass(listItem, 'print-major-body');
-    if (body) {
-      body.classList.add('print-merge-detached-body');
-    }
   });
 
   if (pageBody) {
