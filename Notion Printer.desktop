@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Notion Printer
+Comment=Generate print-friendly HTML from a Notion export
+Exec=/home/robros0/Desktop/ws/notion_printer/notion_print_export_launcher.sh %f
+Terminal=false
+MimeType=text/html;
+Categories=Utility;
+Icon=text-html
+StartupNotify=true

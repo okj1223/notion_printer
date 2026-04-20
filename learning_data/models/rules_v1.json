@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "version": "rules_v1",
+  "description": "Rule-only starter config for layout recommendations before ML rankers are trained.",
+  "tasks": {
+    "break_recommendation": {
+      "enabled": true,
+      "thresholds": {
+        "remaining_space_px_soft": 120,
+        "remaining_space_px_hard": 72,
+        "text_char_count_soft": 140,
+        "image_dom_height_px_hard": 220
+      },
+      "weights": {
+        "remaining_space_px": 0.55,
+        "block_text_char_count": 0.2,
+        "block_has_image": 0.15,
+        "block_has_table": 0.1
+      },
+      "per_block_type": {
+        "section_heading": {
+          "remaining_space_px_soft": 180,
+          "remaining_space_px_hard": 108,
+          "base_bonus": 0.12,
+          "used_height_ratio_min": 0.68,
+          "used_height_ratio_bonus": 0.1,
+          "suggestion_threshold": 0.56,
+          "base_reason": "섹션 제목은 새 페이지에서 시작할수록 읽기 흐름이 안정적임",
+          "used_height_reason": "섹션 제목이 페이지 하단에 걸려 있음"
+        },
+        "table": {
+          "remaining_space_px_soft": 168,
+          "remaining_space_px_hard": 96,
+          "base_bonus": 0.08,
+          "used_height_ratio_min": 0.78,
+          "used_height_ratio_bonus": 0.14,
+          "large_block_dom_height_px": 180,
+          "large_block_bonus": 0.12,
+          "suggestion_threshold": 0.58,
+          "base_reason": "표는 한 페이지 안에서 묶여 있을수록 읽기 쉬움",
+          "used_height_reason": "표가 페이지 하단에서 잘리기 쉬움",
+          "large_block_reason": "표 높이가 커서 다음 페이지 배치가 안정적임"
+        },
+        "image": {
+          "remaining_space_px_soft": 144,
+          "remaining_space_px_hard": 84,
+          "base_bonus": 0.04,
+          "used_height_ratio_min": 0.8,
+          "used_height_ratio_bonus": 0.08,
+          "large_block_dom_height_px": 250,
+          "large_block_bonus": 0.1,
+          "base_reason": "큰 이미지 블록은 페이지 하단 충돌 가능성이 큼",
+          "used_height_reason": "이미지가 페이지 하단에 밀집됨",
+          "large_block_reason": "이미지 높이가 커서 새 페이지가 더 안정적임"
+        }
+      }
+    },
+    "gap_recommendation": {
+      "enabled": true,
+      "defaults": {
+        "soft_gap_units": 1,
+        "max_gap_units": 3
+      },
+      "thresholds": {
+        "remaining_space_px_tight": 56,
+        "remaining_space_px_soft": 96
+      },
+      "per_block_type": {
+        "section_heading": {
+          "remaining_space_px_soft": 160,
+          "soft_gap_units": 1,
+          "soft_score": 0.66,
+          "used_height_ratio_min": 0.64,
+          "used_height_ratio_units": 1,
+          "used_height_ratio_score": 0.7,
+          "soft_reason": "섹션 제목 앞 간격이 있으면 읽기 흐름이 좋아짐",
+          "used_height_reason": "섹션 제목이 페이지 하단에 너무 붙어 있음"
+        },
+        "table": {
+          "remaining_space_px_tight": 76,
+          "remaining_space_px_soft": 132,
+          "soft_gap_units": 1,
+          "soft_score": 0.6,
+          "used_height_ratio_min": 0.74,
+          "used_height_ratio_units": 1,
+          "used_height_ratio_score": 0.64,
+          "soft_reason": "표 앞 여백을 조금 두면 표 묶음이 더 안정적임",
+          "used_height_reason": "표를 다음 페이지로 부드럽게 넘길 여유가 적음"
+        }
+      }
+    },
+    "image_scale_recommendation": {
+      "enabled": true,
+      "defaults": {
+        "target_scale_pct": 88,
+        "min_scale_pct": 68
+      },
+      "thresholds": {
+        "remaining_space_px": 60,
+        "image_dom_height_px": 260
+      },
+      "per_block_type": {
+        "image": {
+          "remaining_space_px": 84,
+          "image_dom_height_px": 240,
+          "target_scale_pct": 84,
+          "min_scale_pct": 64,
+          "used_height_ratio_min": 0.84,
+          "used_height_ratio_score": 0.82,
+          "portrait_aspect_ratio_max": 0.95,
+          "portrait_target_scale_pct": 78,
+          "remaining_space_reason": "이미지 아래 여백이 부족함",
+          "image_height_reason": "이미지 높이가 커서 페이지를 많이 차지함",
+          "used_height_reason": "페이지 사용량이 높아 이미지 축소 여지가 큼",
+          "portrait_reason": "세로형 이미지는 조금 줄이면 페이지 안정성이 좋아짐"
+        }
+      }
+    },
+    "delete_recommendation": {
+      "enabled": false,
+      "note": "Keep delete suggestions off by default until enough positive/negative labels are collected."
+    }
+  }
+}

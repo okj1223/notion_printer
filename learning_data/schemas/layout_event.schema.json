@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://notion-printer.local/schemas/layout_event.schema.json",
+  "title": "Notion Printer Layout Event",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "session_id",
+    "document_id",
+    "variant",
+    "ts",
+    "action_type"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "document_id": {
+      "type": "string"
+    },
+    "variant": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "set_break_mode",
+        "set_space_mode",
+        "adjust_gap",
+        "set_image_scale",
+        "delete_node",
+        "delete_page",
+        "undo"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "candidate_id": { "type": "string" },
+        "persist_id": { "type": "string" },
+        "page_number": { "type": "integer" },
+        "node_kind": { "type": "string" },
+        "tag_name": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "before": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "after": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "doc": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "page": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "block": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "neighbors": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "ui": {
+      "type": "object",
+      "properties": {
+        "source": { "type": "string" },
+        "suggestion_source": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

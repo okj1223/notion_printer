@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Notion Printer Advanced
+Comment=Open the advanced Notion Printer options
+Exec=/home/robros0/Desktop/ws/notion_printer/notion_print_export_launcher.sh --advanced
+Terminal=false
+Categories=Utility;
+Icon=text-html
+StartupNotify=true

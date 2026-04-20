@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "generator_version": "learning-mvp-1",
+  "generated_at": "2026-04-20T08:01:22.291Z",
+  "document_id": "doc_fixer-348067c405008043a526f70d5f21e654_4572bd2f0729",
+  "source_hash": "4572bd2f07290560a8e63adf873962bbb02d537d",
+  "input_file": "/home/robros0/Downloads/260420_픽서가이드라인/ExportBlock-430fde78-193b-4e51-9191-983f38a5b861-Part-1/개인 페이지 & 공유된 페이지/FIXER 가이드라인 348067c405008043a526f70d5f21e654.html",
+  "input_name": "FIXER 가이드라인 348067c405008043a526f70d5f21e654.html",
+  "output_file": "/home/robros0/Downloads/260420_픽서가이드라인/ExportBlock-430fde78-193b-4e51-9191-983f38a5b861-Part-1/개인 페이지 & 공유된 페이지/FIXER 가이드라인 348067c405008043a526f70d5f21e654_print_compact.html",
+  "output_name": "FIXER 가이드라인 348067c405008043a526f70d5f21e654_print_compact.html",
+  "variant": "print_compact",
+  "body_classes": [
+    "print-ready",
+    "print-compact"
+  ],
+  "is_fast_variant": false,
+  "is_compact_variant": true,
+  "features": {
+    "section_count": 4,
+    "paragraph_count": 57,
+    "image_count": 33,
+    "table_count": 8,
+    "bulleted_list_count": 46,
+    "numbered_list_count": 22,
+    "list_item_count": 68,
+    "details_count": 1,
+    "text_char_count": 20874,
+    "block_count": 127
+  }
+}
