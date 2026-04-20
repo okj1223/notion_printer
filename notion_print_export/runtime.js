@@ -1703,6 +1703,10 @@
   }
 
   function currentSelectedRenderedNode() {
+    if (selectedTargetState.kind === 'page' && selectedTargetState.pageNumber) {
+      var pageNode = document.querySelector('.pagedjs_pages .pagedjs_page[data-page-number="' + String(selectedTargetState.pageNumber) + '"]');
+      if (pageNode) return pageNode;
+    }
     if (selectedTargetState.kind === 'image' && selectedTargetState.persistId) {
       var imageNode = persistedNodeById(selectedTargetState.persistId);
       if (imageNode) return imageNode;
@@ -1726,6 +1730,9 @@
     if (editorBlockSelect && selectedTargetState.candidateId) {
       editorBlockSelect.value = selectedTargetState.candidateId;
     }
+    if (editorPageSelect && selectedTargetState.pageNumber) {
+      editorPageSelect.value = String(selectedTargetState.pageNumber);
+    }
   }
 
   function setSelectedTarget(nextState, options) {
@@ -1744,8 +1751,12 @@
       }
     }
     syncSelectedRenderedState();
-    if (!config.silent && selectedTargetState.persistId) {
-      updateEditorBannerStatus('선택한 블록을 기준으로 편집합니다');
+    if (!config.silent) {
+      if (selectedTargetState.kind === 'page' && selectedTargetState.pageNumber) {
+        updateEditorBannerStatus(selectedTargetState.pageNumber + '페이지를 기준으로 보고 있습니다');
+      } else if (selectedTargetState.persistId) {
+        updateEditorBannerStatus('선택한 블록을 기준으로 편집합니다');
+      }
     }
   }
 
@@ -1804,13 +1815,22 @@
       };
     }
     var persistedNode = node.closest('[data-print-persist-id]');
-    if (!persistedNode) return null;
-    var fallbackCandidate = findCandidateByPersistId(persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '');
+    if (persistedNode) {
+      var fallbackCandidate = findCandidateByPersistId(persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '');
+      return {
+        kind: 'block',
+        candidateId: fallbackCandidate ? fallbackCandidate.id : '',
+        persistId: persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '',
+        pageNumber: pageNumberFromNode(closestRenderedPageNode(persistedNode))
+      };
+    }
+    var pageNode = node.closest('.pagedjs_page[data-page-number]');
+    if (!pageNode) return null;
     return {
-      kind: 'block',
-      candidateId: fallbackCandidate ? fallbackCandidate.id : '',
-      persistId: persistedNode.dataset && persistedNode.dataset.printPersistId ? persistedNode.dataset.printPersistId : '',
-      pageNumber: pageNumberFromNode(closestRenderedPageNode(persistedNode))
+      kind: 'page',
+      candidateId: '',
+      persistId: '',
+      pageNumber: pageNumberFromNode(pageNode)
     };
   }
 
@@ -1898,13 +1918,20 @@
 
   function captureRenderedPageSnapshot(pageNode) {
     if (!pageNode) return null;
-    var range = firstLastCandidateIdsInPage(pageNode);
+    var meta = describeRenderedPage(pageNode);
     return {
-      page_number: pageNode.getAttribute('data-page-number') || '',
-      first_candidate_id: range.first || '',
-      last_candidate_id: range.last || '',
-      candidate_count: pageNode.querySelectorAll('[data-print-break-id]').length,
-      persist_count: pageNode.querySelectorAll('[data-print-persist-id]').length
+      page_number: meta.pageNumber,
+      first_candidate_id: meta.firstCandidateId || '',
+      last_candidate_id: meta.lastCandidateId || '',
+      first_persist_id: meta.firstPersistId || '',
+      last_persist_id: meta.lastPersistId || '',
+      page_label: meta.primaryLabel || '',
+      page_role: meta.role || 'page',
+      continued_from_previous: !!meta.continuedFromPrevious,
+      continues_to_next: !!meta.continuesToNext,
+      shared_persist_ids: uniqueTruthyStrings(meta.sharedWithPrevious.concat(meta.sharedWithNext)),
+      candidate_count: meta.candidateCount,
+      persist_count: meta.persistCount
     };
   }
 
@@ -2189,10 +2216,11 @@
 
   function pageLabelText(pageNode) {
     if (!pageNode) return '페이지';
-    var pageNumber = pageNode.getAttribute('data-page-number') || '?';
-    var heading = pageNode.querySelector('.print-section [data-print-block-type="section_heading"], .print-section h1:not(.page-title), .print-section h2, .print-section h3, .print-major-title, .page-title');
-    var snippet = breakLabelText(heading, '페이지 ' + pageNumber);
-    return pageNumber + '페이지 - ' + snippet;
+    var meta = describeRenderedPage(pageNode);
+    var labels = [String(meta.pageNumber || '?') + '페이지', meta.primaryLabel || '페이지'];
+    if (meta.continuedFromPrevious) labels.push('앞에서 이어짐');
+    if (meta.continuesToNext) labels.push('다음으로 이어짐');
+    return labels.filter(Boolean).join(' · ');
   }
 
   function refreshNavigatorOptions() {
@@ -2227,6 +2255,9 @@
       });
       if (previousPageValue) {
         editorPageSelect.value = previousPageValue;
+      }
+      if (selectedTargetState.pageNumber) {
+        editorPageSelect.value = String(selectedTargetState.pageNumber);
       }
     }
     updateEditorUiSummary();
@@ -2470,6 +2501,7 @@
       updateEditorBannerStatus('선택한 페이지를 찾지 못했습니다');
       return;
     }
+    setSelectedTarget({ kind: 'page', candidateId: '', persistId: '', pageNumber: parseInt(pageNumber, 10) || 0 }, { silent: true });
     scrollNodeToOffset(pageNode, 72, 'smooth');
     pageNode.classList.remove('print-page-target-highlight');
     void pageNode.offsetWidth;
@@ -2616,12 +2648,12 @@
   }
 
   function mergeCandidateForPage(pageNode) {
-    var range = firstLastCandidateIdsInPage(pageNode);
-    if (range.first) {
-      var directCandidate = findCandidateById(range.first);
+    var meta = describeRenderedPage(pageNode);
+    if (meta.mergeCandidateId) {
+      var directCandidate = findCandidateById(meta.mergeCandidateId);
       if (directCandidate) return directCandidate;
     }
-    var fallbackPersistNode = pageNode && pageNode.querySelector ? pageNode.querySelector('[data-print-persist-id]') : null;
+    var fallbackPersistNode = meta.anchorPersistId ? renderedNodeByPersistId(pageNode, meta.anchorPersistId) : null;
     if (!fallbackPersistNode || !fallbackPersistNode.dataset) return null;
     var fallbackCandidate = findCandidateByPersistId(fallbackPersistNode.dataset.printPersistId || '');
     if (!fallbackCandidate) return null;
@@ -2738,7 +2770,7 @@
     var root = renderedPagesRoot();
     if (!root) return '';
     var clone = root.cloneNode(true);
-    Array.from(clone.querySelectorAll('.print-insert-actions, .print-page-action-group, .print-page-merge-button, .print-page-delete-button, .print-inline-tools')).forEach(function (node) {
+    Array.from(clone.querySelectorAll('.print-page-chrome, .print-insert-actions, .print-page-action-group, .print-page-merge-button, .print-page-delete-button, .print-inline-tools')).forEach(function (node) {
       node.remove();
     });
     return clone.innerHTML;
@@ -2786,11 +2818,169 @@
     });
   }
 
-  function persistedIdsInRenderedPage(pageNode) {
+  function uniqueStringIntersection(leftValues, rightValues) {
+    var rightLookup = {};
+    uniqueTruthyStrings(rightValues).forEach(function (value) {
+      rightLookup[value] = true;
+    });
+    return uniqueTruthyStrings(leftValues).filter(function (value) {
+      return !!rightLookup[value];
+    });
+  }
+
+  function pageCandidateIds(pageNode) {
+    if (!pageNode || !pageNode.querySelectorAll) return [];
+    return uniqueTruthyStrings(Array.from(pageNode.querySelectorAll('[data-print-break-id]')).map(function (node) {
+      return node && node.getAttribute ? node.getAttribute('data-print-break-id') || '' : '';
+    }));
+  }
+
+  function pagePersistIds(pageNode) {
     if (!pageNode || !pageNode.querySelectorAll) return [];
     return uniqueTruthyStrings(Array.from(pageNode.querySelectorAll('[data-print-persist-id]')).map(function (node) {
       return node && node.dataset ? node.dataset.printPersistId || '' : '';
     }));
+  }
+
+  function persistedIdsInRenderedPage(pageNode) {
+    if (!pageNode || !pageNode.querySelectorAll) return [];
+    return pagePersistIds(pageNode);
+  }
+
+  function renderedNodeByPersistId(pageNode, persistId) {
+    if (!pageNode || !persistId || !pageNode.querySelector) return null;
+    return pageNode.querySelector('[data-print-persist-id="' + persistId + '"]');
+  }
+
+  function pageLabelForPersistId(pageNode, persistId, fallback) {
+    var labelFallback = fallback || '페이지';
+    var node = persistId ? renderedNodeByPersistId(pageNode, persistId) : null;
+    if (!node && pageNode && pageNode.querySelector) {
+      node = pageNode.querySelector('[data-print-block-type="section_heading"], h1:not(.page-title), h2, h3, .print-major-title, .print-inline-block, p, figure.image, .print-table-block');
+    }
+    if (!node) return labelFallback;
+    return candidateLabelFromBlock(blockContractNode(node) || node, labelFallback);
+  }
+
+  function describeRenderedPage(pageNode) {
+    if (!pageNode) {
+      return {
+        pageNumber: 0,
+        candidateIds: [],
+        persistIds: [],
+        firstCandidateId: '',
+        lastCandidateId: '',
+        firstPersistId: '',
+        lastPersistId: '',
+        anchorPersistId: '',
+        primaryLabel: '페이지',
+        trailingLabel: '',
+        candidateCount: 0,
+        persistCount: 0,
+        sharedWithPrevious: [],
+        sharedWithNext: [],
+        continuedFromPrevious: false,
+        continuesToNext: false,
+        canMerge: false,
+        canDelete: false,
+        mergeCandidateId: '',
+        mergeHelpText: '페이지 정보를 읽지 못했습니다',
+        deleteHelpText: '페이지 정보를 읽지 못했습니다',
+        continuationBadges: [],
+        detailText: '블록 0개',
+        signature: '',
+        role: 'page'
+      };
+    }
+
+    var previousPage = pageNode.previousElementSibling && pageNode.previousElementSibling.matches && pageNode.previousElementSibling.matches('.pagedjs_page[data-page-number]') ? pageNode.previousElementSibling : null;
+    var nextPage = pageNode.nextElementSibling && pageNode.nextElementSibling.matches && pageNode.nextElementSibling.matches('.pagedjs_page[data-page-number]') ? pageNode.nextElementSibling : null;
+    var candidateIds = pageCandidateIds(pageNode);
+    var persistIds = pagePersistIds(pageNode);
+    var previousPersistIds = pagePersistIds(previousPage);
+    var nextPersistIds = pagePersistIds(nextPage);
+    var sharedWithPrevious = uniqueStringIntersection(persistIds, previousPersistIds);
+    var sharedWithNext = uniqueStringIntersection(persistIds, nextPersistIds);
+    var continuedFromPrevious = sharedWithPrevious.length > 0;
+    var continuesToNext = sharedWithNext.length > 0;
+    var firstCandidateId = candidateIds[0] || '';
+    var lastCandidateId = candidateIds.length ? candidateIds[candidateIds.length - 1] : '';
+    var firstPersistId = persistIds[0] || '';
+    var lastPersistId = persistIds.length ? persistIds[persistIds.length - 1] : '';
+    var firstUniquePersistId = persistIds.find(function (persistId) {
+      return sharedWithPrevious.indexOf(persistId) === -1;
+    }) || '';
+    var lastUniquePersistId = persistIds.slice().reverse().find(function (persistId) {
+      return sharedWithNext.indexOf(persistId) === -1;
+    }) || '';
+    var anchorPersistId = firstUniquePersistId || firstPersistId || lastUniquePersistId || '';
+    var primaryLabel = pageLabelForPersistId(pageNode, anchorPersistId, '페이지 ' + (pageNode.getAttribute('data-page-number') || '?'));
+    var trailingLabel = pageLabelForPersistId(pageNode, lastUniquePersistId || lastPersistId, primaryLabel);
+    var continuationBadges = [];
+    if (continuedFromPrevious) continuationBadges.push('앞 페이지에서 이어짐');
+    if (continuesToNext) continuationBadges.push('다음 페이지로 이어짐');
+
+    var mergeCandidateId = !continuedFromPrevious ? firstCandidateId : '';
+    var canMerge = !!mergeCandidateId && parseInt(pageNode.getAttribute('data-page-number') || '0', 10) > 1;
+    var canDelete = !!persistIds.length && !continuedFromPrevious && !continuesToNext;
+
+    var mergeHelpText = '앞 페이지로 자연스럽게 이어 붙입니다';
+    if (!canMerge) {
+      if (continuedFromPrevious) {
+        mergeHelpText = '이 페이지는 앞 페이지 내용이 이어져 시작해서 페이지 합치기를 제한합니다';
+      } else if (!firstCandidateId) {
+        mergeHelpText = '페이지 시작 기준 블록을 찾지 못했습니다';
+      } else {
+        mergeHelpText = '첫 페이지는 앞 페이지에 붙일 수 없습니다';
+      }
+    }
+
+    var deleteHelpText = '현재 페이지에만 있는 내용을 삭제합니다';
+    if (!canDelete) {
+      if (!persistIds.length) {
+        deleteHelpText = '삭제할 페이지 내용이 없습니다';
+      } else {
+        deleteHelpText = '이 페이지에는 앞뒤 페이지와 이어진 블록이 있어 페이지 단위 삭제를 제한합니다';
+      }
+    }
+
+    var detailBits = [String(candidateIds.length) + '개 블록'];
+    if (trailingLabel && trailingLabel !== primaryLabel) {
+      detailBits.push('끝 ' + trailingLabel);
+    }
+
+    return {
+      pageNumber: parseInt(pageNode.getAttribute('data-page-number') || '0', 10) || 0,
+      candidateIds: candidateIds,
+      persistIds: persistIds,
+      firstCandidateId: firstCandidateId,
+      lastCandidateId: lastCandidateId,
+      firstPersistId: firstPersistId,
+      lastPersistId: lastPersistId,
+      anchorPersistId: anchorPersistId,
+      primaryLabel: primaryLabel,
+      trailingLabel: trailingLabel,
+      candidateCount: candidateIds.length,
+      persistCount: persistIds.length,
+      sharedWithPrevious: sharedWithPrevious,
+      sharedWithNext: sharedWithNext,
+      continuedFromPrevious: continuedFromPrevious,
+      continuesToNext: continuesToNext,
+      canMerge: canMerge,
+      canDelete: canDelete,
+      mergeCandidateId: mergeCandidateId,
+      mergeHelpText: mergeHelpText,
+      deleteHelpText: deleteHelpText,
+      continuationBadges: continuationBadges,
+      detailText: detailBits.join(' · '),
+      signature: [
+        String(pageNode.getAttribute('data-page-number') || ''),
+        firstPersistId,
+        lastPersistId,
+        String(candidateIds.length)
+      ].join('::'),
+      role: continuedFromPrevious || continuesToNext ? 'continued_flow_page' : 'stable_page'
+    };
   }
 
   function renderedContentRoot(pageNode) {
@@ -2810,7 +3000,7 @@
 
   function clearEditorArtifacts(root) {
     if (!root || !root.querySelectorAll) return;
-    Array.from(root.querySelectorAll('.print-insert-actions, .print-page-action-group, .print-page-merge-button, .print-page-delete-button, .print-inline-tools')).forEach(function (node) {
+    Array.from(root.querySelectorAll('.print-page-chrome, .print-insert-actions, .print-page-action-group, .print-page-merge-button, .print-page-delete-button, .print-inline-tools')).forEach(function (node) {
       node.remove();
     });
   }
@@ -2831,7 +3021,7 @@
   }
 
   function isEditorArtifactNode(node) {
-    return !!(node && node.classList && (
+    return !!(node && node.nodeType === 1 && node.closest && node.closest('.print-page-chrome')) || !!(node && node.classList && (
       node.classList.contains('print-insert-actions') ||
       node.classList.contains('print-page-action-group') ||
       node.classList.contains('print-page-merge-button') ||
@@ -2932,9 +3122,14 @@
       updateEditorBannerStatus('앞 페이지가 없습니다');
       return;
     }
+    var pageMeta = describeRenderedPage(pageNode);
+    if (!pageMeta.canMerge) {
+      updateEditorBannerStatus(pageMeta.mergeHelpText);
+      return;
+    }
     var candidate = mergeCandidateForPage(pageNode);
     if (!candidate) {
-      updateEditorBannerStatus('이 페이지는 현재 이어붙일 기준 블록을 찾지 못했습니다');
+      updateEditorBannerStatus(pageMeta.mergeHelpText);
       return;
     }
     var currentMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
@@ -2966,6 +3161,9 @@
         intent: 'merge_with_previous_page',
         effect: {
           merge_with_previous_page: true,
+          page_label: pageMeta.primaryLabel,
+          page_role: pageMeta.role,
+          page_signature: pageMeta.signature,
           cleared_gap_units: currentGapUnits,
           cleared_space_mode: currentSpaceMode,
           previous_page_number: previousPage.getAttribute('data-page-number') || '',
@@ -3010,15 +3208,19 @@
       return;
     }
 
-    var pageNumber = parseInt(pageNode.getAttribute('data-page-number') || '0', 10) || 0;
+    var pageMeta = describeRenderedPage(pageNode);
+    if (!pageMeta.canDelete) {
+      updateEditorBannerStatus(pageMeta.deleteHelpText);
+      return;
+    }
+
+    var pageNumber = pageMeta.pageNumber;
     var previousPage = pageNode.previousElementSibling;
     var nextPage = pageNode.nextElementSibling;
     var previousPageRange = firstLastCandidateIdsInPage(previousPage);
     var nextPageRange = firstLastCandidateIdsInPage(nextPage);
-    var candidateIds = uniqueTruthyStrings(Array.from(pageNode.querySelectorAll('[data-print-break-id]')).map(function (node) {
-      return node.getAttribute('data-print-break-id') || '';
-    }));
-    var persistIds = persistedIdsInRenderedPage(pageNode);
+    var candidateIds = pageMeta.candidateIds.slice();
+    var persistIds = pageMeta.persistIds.slice();
     if (!persistIds.length && !candidateIds.length) {
       updateEditorBannerStatus('페이지를 없앨 수 없습니다');
       return;
@@ -3034,10 +3236,13 @@
       nodeKind: 'page',
       before: {
         page_number: pageNumber,
-        block_count: candidateIds.length
+        block_count: candidateIds.length,
+        page_label: pageMeta.primaryLabel,
+        page_role: pageMeta.role
       },
       after: {
-        deleted: true
+        deleted: true,
+        deleted_block_count: persistIds.length
       },
       ui: {
         source: 'page_delete_button',
@@ -3049,6 +3254,10 @@
         intent: 'delete_page',
         effect: {
           deleted_page_number: pageNumber,
+          page_label: pageMeta.primaryLabel,
+          page_role: pageMeta.role,
+          page_signature: pageMeta.signature,
+          shared_persist_ids: pageMeta.sharedWithPrevious.concat(pageMeta.sharedWithNext),
           fallback_candidate_id: fallbackCandidateId,
           fallback_persist_id: fallbackPersistId,
           layout_before: snapshotRenderedLayout()
@@ -3116,47 +3325,114 @@
     });
   }
 
+  function ensurePageChrome(pageNode, pageMeta) {
+    if (!pageNode) return null;
+    var chrome = directChildByClass(pageNode, 'print-page-chrome');
+    if (!chrome) {
+      chrome = document.createElement('div');
+      chrome.className = 'print-page-chrome';
+      pageNode.appendChild(chrome);
+    }
+
+    chrome.innerHTML = '';
+    pageNode.dataset.printPageRole = pageMeta.role || 'page';
+    pageNode.dataset.printPageLabel = pageMeta.primaryLabel || '';
+    pageNode.dataset.printPageSignature = pageMeta.signature || '';
+    pageNode.dataset.printPageAnchorPersistId = pageMeta.anchorPersistId || '';
+    pageNode.classList.toggle('print-page-continued-top', !!pageMeta.continuedFromPrevious);
+    pageNode.classList.toggle('print-page-continued-bottom', !!pageMeta.continuesToNext);
+
+    var main = document.createElement('div');
+    main.className = 'print-page-chrome-main';
+
+    var kicker = document.createElement('div');
+    kicker.className = 'print-page-chrome-kicker';
+
+    var pageChip = document.createElement('span');
+    pageChip.className = 'print-page-chip is-strong';
+    pageChip.textContent = (pageMeta.pageNumber || '?') + '페이지';
+    kicker.appendChild(pageChip);
+
+    pageMeta.continuationBadges.forEach(function (label) {
+      var chip = document.createElement('span');
+      chip.className = 'print-page-chip is-flow';
+      chip.textContent = label;
+      kicker.appendChild(chip);
+    });
+
+    if (!pageMeta.canDelete && pageMeta.persistIds && pageMeta.persistIds.length) {
+      var warningChip = document.createElement('span');
+      warningChip.className = 'print-page-chip is-warning';
+      warningChip.textContent = '페이지 단위 삭제 제한';
+      warningChip.title = pageMeta.deleteHelpText;
+      kicker.appendChild(warningChip);
+    }
+
+    main.appendChild(kicker);
+
+    var title = document.createElement('div');
+    title.className = 'print-page-chrome-title';
+    title.textContent = pageMeta.primaryLabel || '페이지';
+    main.appendChild(title);
+
+    var metaLine = document.createElement('div');
+    metaLine.className = 'print-page-chrome-meta';
+    metaLine.textContent = pageMeta.detailText || '블록 0개';
+    main.appendChild(metaLine);
+
+    chrome.appendChild(main);
+
+    var actionGroup = document.createElement('div');
+    actionGroup.className = 'print-page-action-group';
+    chrome.appendChild(actionGroup);
+    return actionGroup;
+  }
+
   function installDirectPageManipulation() {
     var pagesRoot = document.querySelector('.pagedjs_pages');
     if (!pagesRoot) return false;
     var insertedHandles = 0;
 
     Array.from(pagesRoot.querySelectorAll('.pagedjs_page[data-page-number]')).forEach(function (pageNode, index) {
+      var pageMeta = describeRenderedPage(pageNode);
       pageNode.classList.add('print-screen-page');
-      var actionGroup = directChildByClass(pageNode, 'print-page-action-group');
-      if (!actionGroup) {
-        actionGroup = document.createElement('div');
-        actionGroup.className = 'print-page-action-group';
-        pageNode.appendChild(actionGroup);
-      }
+      var actionGroup = ensurePageChrome(pageNode, pageMeta);
 
-      var existingMerge = actionGroup.querySelector('.print-page-merge-button');
-      if (index === 0 && existingMerge) {
-        existingMerge.remove();
-      }
-
-      if (index > 0 && !actionGroup.querySelector('.print-page-merge-button')) {
+      if (index > 0) {
         var mergeButton = document.createElement('button');
         mergeButton.type = 'button';
         mergeButton.className = 'print-page-merge-button';
-        mergeButton.textContent = '페이지 합치기';
-        mergeButton.title = '앞 페이지와 합치기';
+        mergeButton.textContent = '앞 페이지로 붙이기';
+        mergeButton.title = pageMeta.mergeHelpText;
+        mergeButton.disabled = !pageMeta.canMerge;
         mergeButton.addEventListener('click', function () {
           mergeWithPreviousPage(pageNode);
         });
         actionGroup.appendChild(mergeButton);
       }
 
-      if (!actionGroup.querySelector('.print-page-delete-button')) {
-        var deleteButton = document.createElement('button');
-        deleteButton.type = 'button';
-        deleteButton.className = 'print-page-delete-button';
-        deleteButton.textContent = '페이지 없애기';
-        deleteButton.title = '현재 페이지와 해당 내용을 삭제';
-        deleteButton.addEventListener('click', function () {
-          deleteRenderedPage(pageNode);
+      var deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'print-page-delete-button';
+      deleteButton.textContent = '페이지 내용 삭제';
+      deleteButton.title = pageMeta.deleteHelpText;
+      deleteButton.disabled = !pageMeta.canDelete;
+      deleteButton.addEventListener('click', function () {
+        deleteRenderedPage(pageNode);
+      });
+      actionGroup.appendChild(deleteButton);
+
+      if (!pageNode.dataset.printPageSelectionBound) {
+        pageNode.dataset.printPageSelectionBound = 'true';
+        pageNode.addEventListener('click', function (event) {
+          if (isInteractiveCanvasTarget(event.target)) return;
+          if (event.target && event.target.closest && event.target.closest('[data-print-break-id], figure.image[data-print-persist-id]')) return;
+          var liveMeta = describeRenderedPage(pageNode);
+          setSelectedTarget({ kind: 'page', candidateId: '', persistId: '', pageNumber: liveMeta.pageNumber }, { silent: true });
+          refreshNavigatorOptions();
+          updateEditorBannerStatus(liveMeta.pageNumber + '페이지를 기준으로 보고 있습니다');
+          event.stopPropagation();
         });
-        actionGroup.appendChild(deleteButton);
       }
     });
 
@@ -3638,6 +3914,41 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  function ensurePageChromeStyles() {
+    if (document.getElementById('notion-printer-page-chrome-style')) return;
+    var style = document.createElement('style');
+    style.id = 'notion-printer-page-chrome-style';
+    style.textContent = [
+      '@media screen {',
+      '  body.print-ready .pagedjs_pages{padding-top:18px;}',
+      '  body.print-ready .pagedjs_page{margin:0 auto 34px!important;border:1px solid rgba(37,33,29,0.18);border-radius:18px;background:linear-gradient(180deg, rgba(250,248,244,0.9) 0, rgba(255,255,255,0) 52px), #fff;box-shadow:0 20px 38px rgba(17,24,39,0.10);}',
+      '  body.print-ready .pagedjs_page::before{content:none!important;}',
+      '  body.print-ready .pagedjs_page.print-page-continued-top{border-top-color:rgba(47,111,237,0.38);}',
+      '  body.print-ready .pagedjs_page.print-page-continued-bottom{border-bottom-color:rgba(47,111,237,0.38);}',
+      '  body.print-ready .pagedjs_page.print-selected-target{box-shadow:0 0 0 3px rgba(37,99,235,0.12), 0 22px 42px rgba(17,24,39,0.12)!important;}',
+      '  body.print-ready .print-page-chrome{position:absolute;left:16px;right:16px;top:-18px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;z-index:10;pointer-events:none;}',
+      '  body.print-ready .print-page-chrome-main{display:flex;flex-direction:column;gap:4px;min-width:0;padding:10px 14px 11px;border:1px solid rgba(17,24,39,0.12);border-radius:16px;background:rgba(255,255,255,0.98);box-shadow:0 12px 24px rgba(17,24,39,0.10);pointer-events:auto;}',
+      '  body.print-ready .print-page-chrome-kicker{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
+      '  body.print-ready .print-page-chip{display:inline-flex;align-items:center;justify-content:center;padding:3px 9px;border-radius:999px;border:1px solid rgba(17,24,39,0.12);background:rgba(248,250,252,0.98);color:#334155;font-size:0.68rem;font-weight:800;line-height:1.1;letter-spacing:0.01em;}',
+      '  body.print-ready .print-page-chip.is-strong{background:#111827;color:#fff;border-color:#111827;}',
+      '  body.print-ready .print-page-chip.is-flow{background:rgba(47,111,237,0.08);border-color:rgba(47,111,237,0.18);color:#1d4ed8;}',
+      '  body.print-ready .print-page-chip.is-warning{background:rgba(127,29,29,0.08);border-color:rgba(127,29,29,0.18);color:#7f1d1d;}',
+      '  body.print-ready .print-page-chrome-title{max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.92rem;font-weight:800;line-height:1.35;color:#111827;}',
+      '  body.print-ready .print-page-chrome-meta{max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;font-weight:700;line-height:1.35;color:#64748b;}',
+      '  body.print-ready .print-page-action-group{position:static;display:flex;gap:8px;align-items:center;opacity:1!important;transform:none!important;pointer-events:auto;}',
+      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:8px 12px;background:rgba(255,255,255,0.98);color:#111827;font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 10px 20px rgba(17,24,39,0.08);}',
+      '  body.print-ready .print-page-delete-button{color:#7f1d1d;border-color:rgba(127,29,29,0.18);}',
+      '  body.print-ready .print-page-action-group button:disabled{cursor:not-allowed;opacity:0.52;box-shadow:none;background:rgba(248,250,252,0.96);color:#64748b;border-color:rgba(148,163,184,0.22);}',
+      '  body.print-ready .pagedjs_page.print-selected-target .print-page-chrome-main{box-shadow:0 0 0 3px rgba(37,99,235,0.12), 0 12px 24px rgba(17,24,39,0.10);}',
+      '  @media (max-width: 900px){body.print-ready .print-page-chrome{left:10px;right:10px;top:-14px;flex-direction:column;align-items:stretch;}body.print-ready .print-page-chrome-title, body.print-ready .print-page-chrome-meta{max-width:none;}body.print-ready .print-page-action-group{justify-content:flex-end;}}',
+      '}',
+      '@media print {',
+      '  body.print-ready .print-page-chrome{display:none!important;}',
+      '}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(style);
+  }
+
   function installEditorKeyboardShortcuts() {
     if (!document.body || document.body.dataset.printEditorShortcutsBound) return;
     document.body.dataset.printEditorShortcutsBound = 'true';
@@ -3691,6 +4002,7 @@
     if (editorUiBootstrapped) return true;
     if (!pagesRootReady()) return false;
     ensureEditorOverrideStyles();
+    ensurePageChromeStyles();
     buildEditorPanel();
     installEditorKeyboardShortcuts();
     editorUiBootstrapped = true;
@@ -4188,6 +4500,10 @@
 
   function deleteSelectedTarget(uiSource) {
     var selection = currentSelectedTarget();
+    if (selection.kind === 'page' && selection.page_number) {
+      updateEditorBannerStatus('페이지 조작은 페이지 헤더의 버튼에서 처리하세요');
+      return false;
+    }
     if (!selection.has_selection) {
       updateEditorBannerStatus('먼저 삭제할 블록을 선택하세요');
       return false;

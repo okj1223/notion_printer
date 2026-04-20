@@ -209,6 +209,41 @@
     return Array.from((root || document).querySelectorAll('[data-print-break-id]'));
   }
 
+  function uniqueTruthyStrings(values) {
+    var seen = {};
+    return (Array.isArray(values) ? values : []).filter(function (value) {
+      var key = String(value || '');
+      if (!key || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function pagePersistIds(pageNode) {
+    if (!pageNode || !pageNode.querySelectorAll) return [];
+    return uniqueTruthyStrings(Array.from(pageNode.querySelectorAll('[data-print-persist-id]')).map(function (node) {
+      return node && node.dataset ? node.dataset.printPersistId || '' : '';
+    }));
+  }
+
+  function sharedStringValues(leftValues, rightValues) {
+    var lookup = {};
+    uniqueTruthyStrings(rightValues).forEach(function (value) {
+      lookup[value] = true;
+    });
+    return uniqueTruthyStrings(leftValues).filter(function (value) {
+      return !!lookup[value];
+    });
+  }
+
+  function pageLabelFromPersistId(pageNode, persistId, fallback) {
+    var block = persistId ? blockLookup[persistId] || null : null;
+    if (block && block.label) return String(block.label);
+    var node = persistId && pageNode && pageNode.querySelector ? pageNode.querySelector('[data-print-persist-id="' + persistId + '"]') : null;
+    var text = normalizeText(node ? node.textContent || '' : '');
+    return text ? text.slice(0, 96) : fallback;
+  }
+
   function isTableLikeNode(node) {
     if (!node || node.nodeType !== 1 || !node.matches) return false;
     return node.matches('.print-table-block, .print-table-block *, table, table *');
@@ -285,9 +320,20 @@
       return {
         page_number: 0,
         block_count: 0,
+        persist_count: 0,
         image_count: 0,
         remaining_space_px: null,
-        used_height_ratio: null
+        used_height_ratio: null,
+        first_persist_id: '',
+        last_persist_id: '',
+        anchor_persist_id: '',
+        page_label: '',
+        continued_from_previous: false,
+        continues_to_next: false,
+        shared_persist_ids: [],
+        shared_persist_count: 0,
+        page_role: 'page',
+        page_signature: ''
       };
     }
 
@@ -296,19 +342,45 @@
     var targetRect = targetNode && targetNode.getBoundingClientRect ? targetNode.getBoundingClientRect() : null;
     var remaining = targetRect ? Math.max(0, Math.round(pageRect.bottom - targetRect.bottom)) : null;
     var usedRatio = remaining === null ? null : Number(((pageHeight - remaining) / pageHeight).toFixed(4));
+    var candidateIds = candidateNodes(page).map(function (candidateNode) {
+      return candidateNode.getAttribute('data-print-break-id') || '';
+    }).filter(Boolean);
+    var persistIds = pagePersistIds(page);
+    var previousPage = page.previousElementSibling && page.previousElementSibling.matches && page.previousElementSibling.matches('.pagedjs_page[data-page-number]') ? page.previousElementSibling : null;
+    var nextPage = page.nextElementSibling && page.nextElementSibling.matches && page.nextElementSibling.matches('.pagedjs_page[data-page-number]') ? page.nextElementSibling : null;
+    var sharedWithPrevious = sharedStringValues(persistIds, pagePersistIds(previousPage));
+    var sharedWithNext = sharedStringValues(persistIds, pagePersistIds(nextPage));
+    var firstPersistId = persistIds[0] || '';
+    var lastPersistId = persistIds.length ? persistIds[persistIds.length - 1] : '';
+    var anchorPersistId = persistIds.find(function (persistId) {
+      return sharedWithPrevious.indexOf(persistId) === -1;
+    }) || firstPersistId || lastPersistId || '';
+    var sharedPersistIds = uniqueTruthyStrings(sharedWithPrevious.concat(sharedWithNext));
 
     return {
       page_number: pageNumberFromNode(page),
-      block_count: page.querySelectorAll('[data-print-break-id]').length,
+      block_count: candidateIds.length,
+      persist_count: persistIds.length,
       image_count: page.querySelectorAll('figure.image').length,
       remaining_space_px: remaining,
       used_height_ratio: usedRatio,
-      first_candidate_id: (page.querySelector('[data-print-break-id]') || {}).getAttribute ? page.querySelector('[data-print-break-id]').getAttribute('data-print-break-id') || '' : '',
-      last_candidate_id: (function () {
-        var nodes = page.querySelectorAll('[data-print-break-id]');
-        var lastNode = nodes.length ? nodes[nodes.length - 1] : null;
-        return lastNode ? lastNode.getAttribute('data-print-break-id') || '' : '';
-      })()
+      first_candidate_id: candidateIds[0] || '',
+      last_candidate_id: candidateIds.length ? candidateIds[candidateIds.length - 1] : '',
+      first_persist_id: firstPersistId,
+      last_persist_id: lastPersistId,
+      anchor_persist_id: anchorPersistId,
+      page_label: pageLabelFromPersistId(page, anchorPersistId, '페이지 ' + pageNumberFromNode(page)),
+      continued_from_previous: sharedWithPrevious.length > 0,
+      continues_to_next: sharedWithNext.length > 0,
+      shared_persist_ids: sharedPersistIds,
+      shared_persist_count: sharedPersistIds.length,
+      page_role: sharedPersistIds.length ? 'continued_flow_page' : 'stable_page',
+      page_signature: [
+        String(pageNumberFromNode(page)),
+        firstPersistId,
+        lastPersistId,
+        String(candidateIds.length)
+      ].join('::')
     };
   }
 

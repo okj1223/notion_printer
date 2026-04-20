@@ -1192,6 +1192,26 @@ def pick_preferred_output(generated: Iterable[Path], preference: str) -> Path | 
     return next(iter(generated_map.values()), None)
 
 
+def sync_manifest_features_from_blocks(
+    manifest_features: dict[str, object] | None,
+    block_rows: list[dict[str, object]],
+) -> None:
+    if not isinstance(manifest_features, dict):
+        return
+
+    def count(block_type: str) -> int:
+        return sum(1 for row in block_rows if row.get("block_type") == block_type)
+
+    manifest_features["block_count"] = len(block_rows)
+    manifest_features["section_count"] = count("section_heading")
+    manifest_features["paragraph_count"] = count("paragraph")
+    manifest_features["image_count"] = count("image")
+    manifest_features["table_count"] = count("table")
+    manifest_features["list_item_count"] = count("list_item_text") + count("list_item_heading")
+    manifest_features["details_count"] = count("details_summary")
+    manifest_features["text_char_count"] = sum(int(row.get("text_char_count", 0) or 0) for row in block_rows)
+
+
 def open_path(target: Path) -> None:
     subprocess.Popen(["xdg-open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1250,8 +1270,7 @@ def generate_variant(
     )
     blocks_payload = build_blocks_payload(manifest=manifest, blocks=block_rows)
     manifest_features = manifest.get("features")
-    if isinstance(manifest_features, dict):
-        manifest_features["block_count"] = blocks_payload.get("block_count", 0)
+    sync_manifest_features_from_blocks(manifest_features, block_rows)
     rules_config = load_json_if_exists(RULES_MODEL_PATH)
     learned_model = load_json_if_exists(LAYOUT_MODEL_PATH)
     html = set_body_classes(html, body_classes)
