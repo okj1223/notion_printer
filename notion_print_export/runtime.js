@@ -60,8 +60,22 @@
   var storageVersion = 'v8';
   var renderedDomHistory = [];
   var reloadFocusRestoreScheduled = false;
+  var autoOptimizeResumeScheduled = false;
   var manifestStorageSalt = '';
+  var manifestDocumentId = '';
+  var manifestOutputName = '';
+  var manifestVariantName = '';
+  var manifestSourceHash = '';
+  var manifestIsCompactVariant = false;
   var selectedTargetState = { kind: '', candidateId: '', persistId: '', pageNumber: 0 };
+  var selectedImageIds = [];
+  var imageResizeDragState = null;
+  var figureToolRefreshScheduled = false;
+  var pendingFigureToolRefreshIds = {};
+  var listBreakRootCounter = 0;
+  var queuedReloadNotice = '';
+  var storedRenderedLayoutApplied = false;
+  var minimumImageScalePct = 5;
 
   function readManifestPayload() {
     try {
@@ -75,6 +89,9 @@
 
   function storageDocumentKey() {
     var base = location.pathname || document.title || 'document';
+    if (manifestDocumentId) {
+      return manifestDocumentId + '::' + (manifestIsCompactVariant ? 'compact' : 'print');
+    }
     if (!manifestStorageSalt) return base;
     return base + '::' + manifestStorageSalt;
   }
@@ -82,11 +99,240 @@
   (function primeManifestStorageSalt() {
     var manifest = readManifestPayload();
     if (!manifest || typeof manifest !== 'object') return;
+    manifestDocumentId = typeof manifest.document_id === 'string' ? manifest.document_id : '';
+    manifestOutputName = typeof manifest.output_name === 'string' ? manifest.output_name : '';
+    manifestVariantName = typeof manifest.variant === 'string' ? manifest.variant : '';
+    manifestSourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
+    manifestIsCompactVariant = !!manifest.is_compact_variant;
     var generatedAt = typeof manifest.generated_at === 'string' ? manifest.generated_at : '';
     var outputName = typeof manifest.output_name === 'string' ? manifest.output_name : '';
     var sourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
     manifestStorageSalt = generatedAt || [outputName, sourceHash].filter(Boolean).join('::');
   })();
+
+  function uniqueNonEmptyStrings(values) {
+    var seen = {};
+    return (Array.isArray(values) ? values : []).filter(function (value) {
+      var normalized = String(value || '');
+      if (!normalized || seen[normalized]) return false;
+      seen[normalized] = true;
+      return true;
+    });
+  }
+
+  function siblingVariantOutputNames(outputName) {
+    var name = String(outputName || '');
+    if (!name) return [];
+    if (/_print_compact_fast\.html$/i.test(name)) {
+      return [name.replace(/_print_compact_fast\.html$/i, '_print_compact.html')];
+    }
+    if (/_print_compact\.html$/i.test(name)) {
+      return [name.replace(/_print_compact\.html$/i, '_print_compact_fast.html')];
+    }
+    if (/_print_fast\.html$/i.test(name)) {
+      return [name.replace(/_print_fast\.html$/i, '_print.html')];
+    }
+    if (/_print\.html$/i.test(name)) {
+      return [name.replace(/_print\.html$/i, '_print_fast.html')];
+    }
+    return [];
+  }
+
+  function legacyStorageMatchTokens() {
+    var tokens = [];
+    if (location.pathname) tokens.push(location.pathname);
+    if (manifestOutputName) tokens.push(manifestOutputName);
+    siblingVariantOutputNames(manifestOutputName).forEach(function (name) {
+      tokens.push(name);
+    });
+    if (manifestVariantName) tokens.push(manifestVariantName);
+    if (manifestSourceHash) tokens.push(manifestSourceHash.slice(0, 12));
+    return uniqueNonEmptyStrings(tokens);
+  }
+
+  function parsedStoredValue(raw) {
+    if (typeof raw !== 'string' || !raw.length) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function storedValueHasContent(value) {
+    if (Array.isArray(value)) return value.length > 0;
+    if (value && typeof value === 'object') return Object.keys(value).length > 0;
+    return !!value;
+  }
+
+  function legacyStorageTimestamp(key) {
+    var match = String(key || '').match(/::(\d{4}-\d{2}-\d{2}T[^:]+:[^:]+:[^Z]+Z)$/);
+    return match ? match[1] : '';
+  }
+
+  function compareLegacyStorageKeys(leftKey, rightKey) {
+    var leftTimestamp = legacyStorageTimestamp(leftKey);
+    var rightTimestamp = legacyStorageTimestamp(rightKey);
+    if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
+      return leftTimestamp.localeCompare(rightTimestamp);
+    }
+    if (leftTimestamp && !rightTimestamp) return 1;
+    if (!leftTimestamp && rightTimestamp) return -1;
+    return String(leftKey || '').localeCompare(String(rightKey || ''));
+  }
+
+  function renderedOrderScore(layout) {
+    if (!Array.isArray(layout)) return 0;
+    return layout.reduce(function (score, pageEntry) {
+      var ids = Array.isArray(pageEntry && pageEntry.ids) ? pageEntry.ids.filter(Boolean) : [];
+      return score + ids.length + (ids.length ? 1 : 0);
+    }, 0);
+  }
+
+  function mergeHistoryEntries(values) {
+    var merged = [];
+    var seen = {};
+    (Array.isArray(values) ? values : []).forEach(function (entryList) {
+      if (!Array.isArray(entryList)) return;
+      entryList.forEach(function (entry) {
+        var signature = '';
+        try {
+          signature = JSON.stringify(entry);
+        } catch (error) {
+          signature = '';
+        }
+        if (!signature || seen[signature]) return;
+        seen[signature] = true;
+        merged.push(entry);
+      });
+    });
+    if (merged.length > 80) {
+      return merged.slice(merged.length - 80);
+    }
+    return merged;
+  }
+
+  function mergedLegacyStorageValue(namespacePrefix, currentValue, matchedEntries) {
+    var entries = (Array.isArray(matchedEntries) ? matchedEntries : []).slice().sort(function (left, right) {
+      return compareLegacyStorageKeys(left.key, right.key);
+    });
+
+    if (namespacePrefix.indexOf('notion-printer-rendered-order::') === 0) {
+      var bestLayout = Array.isArray(currentValue) ? currentValue : [];
+      var bestScore = renderedOrderScore(bestLayout);
+      entries.forEach(function (entry) {
+        var score = renderedOrderScore(entry.value);
+        if (score > bestScore) {
+          bestLayout = entry.value;
+          bestScore = score;
+        }
+      });
+      return bestLayout;
+    }
+
+    if (namespacePrefix.indexOf('notion-printer-history::') === 0) {
+      var historySources = entries.map(function (entry) { return entry.value; });
+      if (Array.isArray(currentValue) && currentValue.length) {
+        historySources.push(currentValue);
+      }
+      return mergeHistoryEntries(historySources);
+    }
+
+    if (currentValue && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
+      var mergedObject = {};
+      entries.forEach(function (entry) {
+        if (!entry.value || typeof entry.value !== 'object' || Array.isArray(entry.value)) return;
+        Object.keys(entry.value).forEach(function (key) {
+          mergedObject[key] = entry.value[key];
+        });
+      });
+      Object.keys(currentValue).forEach(function (key) {
+        mergedObject[key] = currentValue[key];
+      });
+      return mergedObject;
+    }
+
+    if (!storedValueHasContent(currentValue)) {
+      var lastValue = null;
+      entries.forEach(function (entry) {
+        if (storedValueHasContent(entry.value)) lastValue = entry.value;
+      });
+      return lastValue;
+    }
+
+    return currentValue;
+  }
+
+  function migrateLegacyStorageNamespace(namespacePrefix, targetKey) {
+    try {
+      var existingTargetRaw = localStorage.getItem(targetKey);
+      var existingTargetValue = parsedStoredValue(existingTargetRaw);
+      var tokens = legacyStorageMatchTokens();
+      var matched = [];
+      for (var index = 0; index < localStorage.length; index += 1) {
+        var key = localStorage.key(index);
+        if (!key || key === targetKey) continue;
+        if (key.indexOf(namespacePrefix) !== 0) continue;
+        if (tokens.length && !tokens.some(function (token) { return key.indexOf(token) >= 0; })) continue;
+        var raw = localStorage.getItem(key);
+        var parsed = parsedStoredValue(raw);
+        if (!storedValueHasContent(parsed)) continue;
+        matched.push({
+          key: key,
+          value: parsed
+        });
+      }
+      if (!matched.length && storedValueHasContent(existingTargetValue)) return;
+      var mergedValue = mergedLegacyStorageValue(namespacePrefix, existingTargetValue, matched);
+      if (!storedValueHasContent(mergedValue)) return;
+      var nextRaw = JSON.stringify(mergedValue);
+      if (nextRaw === existingTargetRaw) return;
+      localStorage.setItem(targetKey, nextRaw);
+    } catch (error) {
+      // Ignore migration issues and continue with best-effort state.
+    }
+  }
+
+  function migrateLegacyStorageKeys() {
+    var namespaceBase = [
+      'notion-printer-breaks::',
+      'notion-printer-spaces::',
+      'notion-printer-view::',
+      'notion-printer-text::',
+      'notion-printer-delete::',
+      'notion-printer-gaps::',
+      'notion-printer-pull-up::',
+      'notion-printer-images::',
+      'notion-printer-history::',
+      'notion-printer-rendered-order::',
+      'notion-printer-editor-ui::'
+    ];
+    namespaceBase.forEach(function (prefix) {
+      var targetKey = prefix + storageVersion + '::' + storageDocumentKey();
+      migrateLegacyStorageNamespace(prefix + storageVersion + '::', targetKey);
+    });
+  }
+
+  migrateLegacyStorageKeys();
+
+  function clearLegacyStorageNamespace(namespacePrefix, targetKey) {
+    try {
+      var tokens = legacyStorageMatchTokens();
+      var keysToRemove = [];
+      for (var index = 0; index < localStorage.length; index += 1) {
+        var key = localStorage.key(index);
+        if (!key || key === targetKey) continue;
+        if (key.indexOf(namespacePrefix) !== 0) continue;
+        if (tokens.length && !tokens.some(function (token) { return key.indexOf(token) >= 0; })) continue;
+        keysToRemove.push(key);
+      }
+      keysToRemove.forEach(function (key) {
+        localStorage.removeItem(key);
+      });
+    } catch (error) {
+      // Ignore storage cleanup issues and continue with best-effort reset.
+    }
+  }
 
   function breakStorageKey() {
     return 'notion-printer-breaks::' + storageVersion + '::' + storageDocumentKey();
@@ -134,6 +380,10 @@
 
   function reloadFocusStorageKey() {
     return 'notion-printer-reload-focus::' + storageVersion + '::' + storageDocumentKey();
+  }
+
+  function autoOptimizeStorageKey() {
+    return 'notion-printer-auto-optimize::' + storageVersion + '::' + storageDocumentKey();
   }
 
   function sanitizeBreakMode(mode) {
@@ -287,7 +537,7 @@
       if (parsed === 4) return 68;
       return 100;
     }
-    if (parsed < 60) return 60;
+    if (parsed < minimumImageScalePct) return minimumImageScalePct;
     if (parsed > 100) return 100;
     return parsed;
   }
@@ -354,6 +604,30 @@
   function clearStoredReloadFocus() {
     try {
       sessionStorage.removeItem(reloadFocusStorageKey());
+    } catch (error) {
+      // Ignore storage issues and continue.
+    }
+  }
+
+  function readStoredAutoOptimize() {
+    try {
+      return JSON.parse(sessionStorage.getItem(autoOptimizeStorageKey()) || 'null');
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeStoredAutoOptimize(payload) {
+    try {
+      sessionStorage.setItem(autoOptimizeStorageKey(), JSON.stringify(payload || {}));
+    } catch (error) {
+      // Ignore storage issues and continue with best-effort auto optimize.
+    }
+  }
+
+  function clearStoredAutoOptimize() {
+    try {
+      sessionStorage.removeItem(autoOptimizeStorageKey());
     } catch (error) {
       // Ignore storage issues and continue.
     }
@@ -560,7 +834,8 @@
       text: JSON.parse(JSON.stringify(textOverrideMap || {})),
       deleted: JSON.parse(JSON.stringify(deletedNodeMap || {})),
       gaps: JSON.parse(JSON.stringify(manualGapMap || {})),
-      images: JSON.parse(JSON.stringify(imageScaleMap || {}))
+      images: JSON.parse(JSON.stringify(imageScaleMap || {})),
+      renderedLayout: JSON.parse(JSON.stringify(snapshotRenderedLayout() || []))
     };
   }
 
@@ -574,6 +849,7 @@
     deletedNodeMap = safeState.deleted || {};
     manualGapMap = safeState.gaps || {};
     imageScaleMap = safeState.images || {};
+    var renderedLayout = Array.isArray(safeState.renderedLayout) ? safeState.renderedLayout : [];
 
     writeStoredBreakOverrides();
     writeStoredSpaceOverrides();
@@ -583,6 +859,7 @@
     writeStoredDeletedNodes();
     writeStoredGaps();
     writeStoredImageScales();
+    writeStoredRenderedOrder(renderedLayout);
 
     applyViewSettings();
     applyResolvedBreakModes();
@@ -662,6 +939,85 @@
     } catch (error) {
       // Ignore storage issues and continue with in-memory state.
     }
+  }
+
+  function clearDocumentEditStorage() {
+    breakOverrideMap = {};
+    spaceOverrideMap = {};
+    pullUpOverrideMap = {};
+    textOverrideMap = {};
+    deletedNodeMap = {};
+    manualGapMap = {};
+    imageScaleMap = {};
+    storedRenderedLayoutApplied = false;
+
+    writeStoredBreakOverrides();
+    writeStoredSpaceOverrides();
+    writeStoredPullUpOverrides();
+    writeStoredTextOverrides();
+    writeStoredDeletedNodes();
+    writeStoredGaps();
+    writeStoredImageScales();
+    writeStoredRenderedOrder([]);
+
+    clearLegacyStorageNamespace('notion-printer-breaks::' + storageVersion + '::', breakStorageKey());
+    clearLegacyStorageNamespace('notion-printer-spaces::' + storageVersion + '::', spaceStorageKey());
+    clearLegacyStorageNamespace('notion-printer-text::' + storageVersion + '::', textStorageKey());
+    clearLegacyStorageNamespace('notion-printer-delete::' + storageVersion + '::', deleteStorageKey());
+    clearLegacyStorageNamespace('notion-printer-gaps::' + storageVersion + '::', gapStorageKey());
+    clearLegacyStorageNamespace('notion-printer-pull-up::' + storageVersion + '::', pullUpStorageKey());
+    clearLegacyStorageNamespace('notion-printer-images::' + storageVersion + '::', imageScaleStorageKey());
+    clearLegacyStorageNamespace('notion-printer-rendered-order::' + storageVersion + '::', renderedOrderStorageKey());
+    clearLegacyOrderStorage();
+  }
+
+  function resetAllEdits(options) {
+    var config = options || {};
+    if (config.confirm !== false) {
+      var confirmed = window.confirm('지금까지의 나누기, 합치기, 삭제, 텍스트, 이미지 조정을 모두 초기화할까요? 되돌리기로 복구할 수 있습니다.');
+      if (!confirmed) return;
+    }
+
+    var targetNode = currentSelectedRenderedNode() || document.querySelector('.pagedjs_pages [data-print-break-id]') || document.querySelector('.pagedjs_pages .pagedjs_page[data-page-number]');
+    pushHistorySnapshot('reset-all');
+    var eventId = logLearningAction('reset_all_edits', {
+      targetNode: targetNode,
+      candidateId: targetNode && targetNode.getAttribute ? (targetNode.getAttribute('data-print-break-id') || '') : '',
+      persistId: targetNode && targetNode.dataset ? (targetNode.dataset.printPersistId || '') : '',
+      before: {
+        has_manual_breaks: Object.keys(breakOverrideMap || {}).length,
+        has_manual_spaces: Object.keys(spaceOverrideMap || {}).length,
+        has_pullups: Object.keys(pullUpOverrideMap || {}).length,
+        has_text_edits: Object.keys(textOverrideMap || {}).length,
+        has_deleted_nodes: Object.keys(deletedNodeMap || {}).length,
+        has_manual_gaps: Object.keys(manualGapMap || {}).length,
+        has_image_scales: Object.keys(imageScaleMap || {}).length,
+        rendered_page_count: snapshotRenderedLayout().length
+      },
+      after: {
+        reset_requested: true
+      },
+      ui: {
+        source: config.uiSource || 'reset_all_button',
+        suggestion_source: 'manual'
+      },
+      meta: buildRuntimeActionMeta(targetNode, {
+        intent: 'reset_all_edits',
+        effect: {
+          reset_all_edits: true,
+          layout_before: snapshotRenderedLayout()
+        }
+      })
+    });
+
+    clearDocumentEditStorage();
+    clearStoredAutoOptimize();
+    updateEditorBannerStatus('편집 내용을 초기화하는 중…');
+    reloadWithPreservedFocus({
+      intent: 'reset_all_edits',
+      actionEventId: eventId,
+      targetNode: targetNode
+    });
   }
 
   function applyViewSettings() {
@@ -828,6 +1184,158 @@
       wrapper.appendChild(node);
     });
     return wrapper;
+  }
+
+  function isSegmentableListChild(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (node.tagName === 'UL' || node.tagName === 'OL') return false;
+    if (node.classList && (
+      node.classList.contains('print-inline-tools') ||
+      node.classList.contains('print-insert-actions')
+    )) return false;
+    if (isFigureBlock(node) || isTableLikeNode(node)) return true;
+    if (node.matches && node.matches('p, figure.image, .print-inline-block, .print-table-block, blockquote, pre, .callout, .print-shortcut-block')) {
+      return true;
+    }
+    return normalizePrintText(node.textContent || '').length > 0 || containsFigureDescendant(node);
+  }
+
+  function cloneBulletListSegmentShell(sourceLi) {
+    var clone = document.createElement('li');
+    Array.from(sourceLi.attributes || []).forEach(function (attr) {
+      if (!attr || !attr.name) return;
+      if (attr.name === 'class') return;
+      if (attr.name === 'id' || attr.name === 'data-print-persist-id' || attr.name === 'data-print-break-id' || attr.name === 'data-print-edit-id') return;
+      clone.setAttribute(attr.name, attr.value);
+    });
+    clone.className = sourceLi.className || '';
+    clone.classList.remove('print-bullet-item');
+    clone.classList.remove('print-detached-list-head');
+    clone.classList.add('print-bulletless-item');
+    clone.classList.add('print-detached-list-segment');
+    clone.classList.add('print-detached-list-continued');
+    clone.classList.add('print-breakable-item');
+    return clone;
+  }
+
+  function splitMultiBlockBulletItems() {
+    Array.from(document.querySelectorAll('ul.bulleted-list > li')).forEach(function (li) {
+      if (!li || li.nodeType !== 1) return;
+      if (li.classList.contains('print-major-item')) return;
+      if (Array.from(li.children || []).some(function (child) {
+        return child && child.nodeType === 1 && (child.tagName === 'UL' || child.tagName === 'OL');
+      })) return;
+
+      var parts = Array.from(li.children || []).filter(isSegmentableListChild);
+      if (parts.length <= 1) return;
+
+      li.classList.add('print-detached-list-segment');
+      li.classList.add('print-detached-list-head');
+
+      var insertionPoint = li;
+      parts.slice(1).forEach(function (part) {
+        var sibling = cloneBulletListSegmentShell(li);
+        if (!li.parentNode) return;
+        li.parentNode.insertBefore(sibling, insertionPoint.nextSibling);
+        sibling.appendChild(part);
+        insertionPoint = sibling;
+      });
+    });
+  }
+
+  function cloneIndentedFlowSegmentShell(wrapper) {
+    if (!wrapper || wrapper.nodeType !== 1) return null;
+    var segment = document.createElement(wrapper.tagName || 'div');
+    Array.from(wrapper.attributes || []).forEach(function (attr) {
+      if (!attr || !attr.name) return;
+      if (attr.name === 'class') return;
+      if (attr.name === 'id' || attr.name === 'data-print-persist-id' || attr.name === 'data-print-break-id' || attr.name === 'data-print-edit-id') return;
+      if (/^data-print-(root|break-root|flow-segment)/.test(attr.name)) return;
+      segment.setAttribute(attr.name, attr.value);
+    });
+    segment.className = wrapper.className || '';
+    segment.classList.add('print-flow-segment');
+    segment.dataset.printFlowSegmentRoot = 'true';
+    return segment;
+  }
+
+  function splitIndentedFlowSegments() {
+    Array.from(document.querySelectorAll('article.page .indented')).forEach(function (wrapper) {
+      if (!wrapper || wrapper.nodeType !== 1 || !wrapper.parentNode) return;
+      if (wrapper.dataset && wrapper.dataset.printFlowSegmentRoot === 'true') return;
+
+      var elementChildren = Array.from(wrapper.children || []).filter(function (child) {
+        return child && child.nodeType === 1 && !(child.classList && (
+          child.classList.contains('print-inline-tools') ||
+          child.classList.contains('print-insert-actions')
+        ));
+      });
+
+      if (elementChildren.length <= 1) return;
+
+      var insertionPoint = wrapper;
+      elementChildren.forEach(function (child) {
+        var segment = cloneIndentedFlowSegmentShell(wrapper);
+        if (!segment || !wrapper.parentNode) return;
+        wrapper.parentNode.insertBefore(segment, insertionPoint);
+        segment.appendChild(child);
+        insertionPoint = segment.nextSibling || segment;
+      });
+
+      wrapper.remove();
+    });
+  }
+
+  function clearListBreakRootHints() {
+    Array.from(document.querySelectorAll('[data-print-root-id]')).forEach(function (node) {
+      if (node && node.dataset) delete node.dataset.printRootId;
+    });
+    Array.from(document.querySelectorAll('[data-print-break-root-id], [data-print-break-root-mode]')).forEach(function (node) {
+      if (!node || !node.dataset) return;
+      delete node.dataset.printBreakRootId;
+      delete node.dataset.printBreakRootMode;
+    });
+  }
+
+  function ensureListBreakRootId(node, prefix) {
+    if (!node || node.nodeType !== 1 || !node.dataset) return '';
+    if (node.dataset.printRootId) return node.dataset.printRootId;
+    listBreakRootCounter += 1;
+    node.dataset.printRootId = String(prefix || 'list-root') + '-' + String(listBreakRootCounter);
+    return node.dataset.printRootId;
+  }
+
+  function directSplitBlocksForListItem(listItem) {
+    if (!listItem || !listItem.children) return [];
+    return Array.from(listItem.children || []).filter(function (child) {
+      return child && child.nodeType === 1 && child.classList && child.classList.contains('print-split-block');
+    });
+  }
+
+  function annotateListBreakRoots() {
+    clearListBreakRootHints();
+    Array.from(document.querySelectorAll('article.page li[data-print-block-type="list_item"], article.page ul.bulleted-list > li, article.page ol.numbered-list > li')).forEach(function (li) {
+      if (!li || li.nodeType !== 1) return;
+      var splitBlocks = directSplitBlocksForListItem(li);
+      if (!splitBlocks.length) return;
+      var rootId = ensureListBreakRootId(li);
+      if (!rootId) return;
+      splitBlocks[0].dataset.printBreakRootId = rootId;
+      splitBlocks[0].dataset.printBreakRootMode = 'list_item';
+    });
+
+    Array.from(document.querySelectorAll('article.page .indented')).forEach(function (wrapper) {
+      if (!wrapper || wrapper.nodeType !== 1 || !wrapper.parentElement) return;
+      if (!wrapper.previousElementSibling) return;
+      var firstSplit = Array.from(wrapper.querySelectorAll('.print-split-block')).find(function (node) {
+        return node && node.nodeType === 1 && node.closest && node.closest('.indented') === wrapper;
+      }) || null;
+      if (!firstSplit) return;
+      var rootId = ensureListBreakRootId(wrapper, 'wrapper-root');
+      if (!rootId) return;
+      firstSplit.dataset.printBreakRootId = rootId;
+      firstSplit.dataset.printBreakRootMode = 'wrapper_segment';
+    });
   }
 
   function ensurePersistentId(node, role) {
@@ -1038,6 +1546,28 @@
       opening.appendChild(title);
       opening.appendChild(introBlock);
       opening.appendChild(firstPair);
+    });
+  }
+
+  function createNestedMajorLeadOpenings() {
+    return;
+    Array.from(document.querySelectorAll('li.print-major-item.print-nested-bullet-group')).forEach(function (li) {
+      if (directChildByClass(li, 'print-major-opening')) return;
+
+      var title = directChildByClass(li, 'print-major-title');
+      var body = directChildByClass(li, 'print-major-body');
+      if (!title || !body) return;
+
+      var firstNestedList = Array.from(body.children || []).find(function (child) {
+        return child && child.nodeType === 1 && (child.tagName === 'UL' || child.tagName === 'OL');
+      });
+      if (!firstNestedList) return;
+
+      var opening = document.createElement('div');
+      opening.className = 'print-major-opening';
+      li.insertBefore(opening, title);
+      opening.appendChild(title);
+      opening.appendChild(firstNestedList);
     });
   }
 
@@ -1273,7 +1803,7 @@
 
   function pullUpContainerForCandidate(candidate) {
     if (!candidate || !candidate.node || !candidate.node.closest) return null;
-    return candidate.node.closest('li, details, blockquote, .callout, .print-table-block, .print-details-block');
+    return candidate.node.closest('[data-print-flow-segment-root="true"], li, details, blockquote, .callout, .print-table-block, .print-details-block');
   }
 
   function candidatePullUpEnabled(candidate) {
@@ -1283,6 +1813,185 @@
 
   function imageScaleValue(level) {
     return sanitizeImageScale(level) / 100;
+  }
+
+  function imageSelectionIds() {
+    selectedImageIds = uniqueTruthyStrings(selectedImageIds || []).filter(function (figureId) {
+      return !!document.querySelector('figure.image[data-print-persist-id="' + figureId + '"]');
+    });
+    return selectedImageIds.slice();
+  }
+
+  function imageSelectionIncludes(figureId) {
+    return imageSelectionIds().indexOf(String(figureId || '')) >= 0;
+  }
+
+  function imageSelectionTargetIds(primaryFigureId) {
+    return uniqueTruthyStrings(imageSelectionIds().concat(primaryFigureId ? [String(primaryFigureId)] : []));
+  }
+
+  function setImageSelectionIds(nextIds) {
+    selectedImageIds = uniqueTruthyStrings(nextIds || []);
+    syncSelectedRenderedState();
+  }
+
+  function toggleImageSelectionId(figureId) {
+    var nextIds = imageSelectionIds();
+    var normalized = String(figureId || '');
+    if (!normalized) return false;
+    var index = nextIds.indexOf(normalized);
+    if (index >= 0) {
+      nextIds.splice(index, 1);
+      setImageSelectionIds(nextIds);
+      return false;
+    }
+    nextIds.push(normalized);
+    setImageSelectionIds(nextIds);
+    return true;
+  }
+
+  function imageElementForFigure(figure) {
+    return figure && figure.querySelector ? figure.querySelector('img') : null;
+  }
+
+  function figureAvailableWidthPx(figure) {
+    if (!figure || !figure.getBoundingClientRect) return 0;
+    return Math.max(0, Math.round(figure.getBoundingClientRect().width || 0));
+  }
+
+  function figureRenderedWidthPx(figure) {
+    var image = imageElementForFigure(figure);
+    if (!image || !image.getBoundingClientRect) return 0;
+    return Math.max(0, Math.round(image.getBoundingClientRect().width || 0));
+  }
+
+  function figureNaturalWidthPx(figure) {
+    var image = imageElementForFigure(figure);
+    if (!image) return 0;
+    return Math.max(0, Math.round(image.naturalWidth || image.width || 0));
+  }
+
+  function minimumFigureWidthPx(figure) {
+    var availableWidth = figureAvailableWidthPx(figure);
+    if (!(availableWidth > 0)) return 1;
+    return Math.max(1, Math.round((availableWidth * minimumImageScalePct) / 100));
+  }
+
+  function targetScaleForFigureWidthPx(figure, widthPx) {
+    var availableWidth = figureAvailableWidthPx(figure);
+    if (!(availableWidth > 0)) return 100;
+    var safeWidth = clampNumber(widthPx, minimumFigureWidthPx(figure), availableWidth);
+    return sanitizeImageScale(Math.round((safeWidth / availableWidth) * 100));
+  }
+
+  function currentFigureWidthInfo(figure) {
+    return {
+      renderedWidthPx: figureRenderedWidthPx(figure),
+      availableWidthPx: figureAvailableWidthPx(figure),
+      naturalWidthPx: figureNaturalWidthPx(figure)
+    };
+  }
+
+  function figureWidthInfoText(figure) {
+    var info = currentFigureWidthInfo(figure);
+    var parts = [];
+    if (info.renderedWidthPx > 0) parts.push('현재 ' + info.renderedWidthPx + 'px');
+    if (info.availableWidthPx > 0) parts.push('최소 ' + minimumFigureWidthPx(figure) + 'px');
+    if (info.availableWidthPx > 0) parts.push('최대 ' + info.availableWidthPx + 'px');
+    if (info.naturalWidthPx > 0) parts.push('원본 ' + info.naturalWidthPx + 'px');
+    return parts.length ? parts.join(' · ') : '이미지 크기 정보를 계산하는 중';
+  }
+
+  function updateFigureSelectionUi(figure, selectionIds) {
+    if (!figure || !figure.dataset) return;
+    var figureId = figure.dataset.printPersistId || '';
+    var currentSelectionIds = Array.isArray(selectionIds) ? selectionIds : imageSelectionIds();
+    var selectionCount = currentSelectionIds.length;
+    var inSelection = !!(figureId && currentSelectionIds.indexOf(String(figureId || '')) >= 0);
+    figure.classList.toggle('print-image-group-selected', inSelection);
+
+    var selectionButton = figure.querySelector('.print-image-selection-button');
+    if (selectionButton) {
+      selectionButton.textContent = inSelection ? '선택 해제' : '선택 추가';
+      selectionButton.title = inSelection ? '이 이미지를 너비 통일 선택에서 제외' : '이 이미지를 너비 통일 선택 목록에 추가';
+    }
+
+    var countBadge = figure.querySelector('.print-image-selection-count');
+    if (countBadge) {
+      countBadge.textContent = selectionCount > 0 ? ('선택 ' + selectionCount + '개') : '단일';
+    }
+
+    var unifyButton = figure.querySelector('.print-image-unify-button');
+    if (unifyButton) {
+      var targetCount = uniqueTruthyStrings(currentSelectionIds.concat(figureId ? [String(figureId)] : [])).length;
+      unifyButton.disabled = targetCount < 2;
+      unifyButton.title = targetCount >= 2 ? '현재 이미지 너비를 선택한 이미지들에 맞춰 적용' : '먼저 통일할 이미지를 두 개 이상 선택하세요';
+    }
+  }
+
+  function updateFigureWidthUi(figure) {
+    if (!figure) return;
+    var infoText = figureWidthInfoText(figure);
+    var infoNode = figure.querySelector('.print-image-width-live');
+    if (infoNode) infoNode.textContent = infoText;
+
+    var widthInput = figure.querySelector('.print-image-width-input');
+    if (widthInput && document.activeElement !== widthInput) {
+      var currentWidth = figureRenderedWidthPx(figure);
+      if (currentWidth > 0) widthInput.value = String(currentWidth);
+    }
+  }
+
+  function figureToolStateTargets(figures) {
+    if (!figures || !figures.length) {
+      return Array.from(document.querySelectorAll('figure.image[data-print-persist-id]'));
+    }
+    return uniqueTruthyStrings((figures || []).map(function (figure) {
+      return figure && figure.dataset ? figure.dataset.printPersistId || '' : '';
+    })).map(function (figureId) {
+      return persistedNodeById(figureId);
+    }).filter(Boolean);
+  }
+
+  function refreshFigureToolState(figures) {
+    var selectionIds = imageSelectionIds();
+    figureToolStateTargets(figures).forEach(function (figure) {
+      updateFigureSelectionUi(figure, selectionIds);
+      updateFigureWidthUi(figure);
+    });
+  }
+
+  function scheduleFigureToolStateRefresh(figures) {
+    if (figures && figures.length) {
+      figureToolStateTargets(figures).forEach(function (figure) {
+        var figureId = figure && figure.dataset ? figure.dataset.printPersistId || '' : '';
+        if (figureId) pendingFigureToolRefreshIds[figureId] = true;
+      });
+    } else {
+      pendingFigureToolRefreshIds.__all__ = true;
+    }
+    if (figureToolRefreshScheduled) return;
+    figureToolRefreshScheduled = true;
+    var flush = function () {
+      figureToolRefreshScheduled = false;
+      var refreshAll = !!pendingFigureToolRefreshIds.__all__;
+      var ids = Object.keys(pendingFigureToolRefreshIds).filter(function (key) {
+        return key && key !== '__all__';
+      });
+      pendingFigureToolRefreshIds = {};
+      if (refreshAll || !ids.length) {
+        refreshFigureToolState();
+        return;
+      }
+      refreshFigureToolState(ids.map(function (figureId) {
+        return persistedNodeById(figureId);
+      }).filter(Boolean));
+    };
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(flush);
+      return;
+    }
+    setTimeout(flush, 16);
   }
 
   function updateFigureScaleUi(figure, level) {
@@ -1319,11 +2028,16 @@
 
   function applyFigureScalePreview(figureId, level) {
     var safeLevel = sanitizeImageScale(level);
+    var touchedFigures = [];
     Array.from(document.querySelectorAll('figure.image[data-print-persist-id]')).forEach(function (figure) {
       var key = figure.dataset && figure.dataset.printPersistId ? figure.dataset.printPersistId : '';
       if (key !== figureId) return;
       applyFigureScaleToFigure(figure, safeLevel);
+      touchedFigures.push(figure);
     });
+    if (touchedFigures.length) {
+      scheduleFigureToolStateRefresh(touchedFigures);
+    }
   }
 
   function currentStoredImageScale(figureId) {
@@ -1331,11 +2045,16 @@
   }
 
   function applyStoredImageScales() {
+    var touchedFigures = [];
     Array.from(document.querySelectorAll('figure.image[data-print-persist-id]')).forEach(function (figure) {
       var key = figure.dataset && figure.dataset.printPersistId ? figure.dataset.printPersistId : '';
       if (!key) return;
       applyFigureScaleToFigure(figure, currentStoredImageScale(key));
+      touchedFigures.push(figure);
     });
+    if (touchedFigures.length) {
+      scheduleFigureToolStateRefresh(touchedFigures);
+    }
   }
 
   function breakLabelText(node, fallback) {
@@ -1368,6 +2087,12 @@
     });
   }
 
+  function clearManualForceAnchors() {
+    Array.from(document.querySelectorAll('[data-print-manual-force-for]')).forEach(function (node) {
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    });
+  }
+
   function firstSplitBlockInListItem(listItem) {
     if (!listItem || !listItem.querySelectorAll) return null;
     return Array.from(listItem.querySelectorAll('.print-split-block')).find(function (node) {
@@ -1375,8 +2100,19 @@
     }) || null;
   }
 
+  function explicitBreakRootForNode(node) {
+    if (!node || node.nodeType !== 1 || !node.dataset) return null;
+    var rootId = node.dataset.printBreakRootId || '';
+    if (!rootId) return null;
+    return document.querySelector('[data-print-root-id="' + rootId + '"]');
+  }
+
   function physicalBreakRootForNode(node) {
     if (!node || node.nodeType !== 1 || !node.closest) return node;
+    var explicitRoot = explicitBreakRootForNode(node);
+    if (explicitRoot) return explicitRoot;
+    var flowSegmentRoot = node.closest('[data-print-flow-segment-root="true"]');
+    if (flowSegmentRoot) return flowSegmentRoot;
     var blockType = blockTypeFromContract(node);
     if (blockType === 'details_summary') {
       var details = node.closest('details');
@@ -1409,11 +2145,45 @@
     return anchor;
   }
 
+  function ensureManualForceAnchor(rootNode, candidate) {
+    if (!rootNode || !rootNode.parentNode || !candidate || !candidate.id) return rootNode;
+    var previous = rootNode.previousElementSibling;
+    if (previous && previous.getAttribute('data-print-manual-force-for') === candidate.id) {
+      previous.className = 'print-break-anchor print-manual-force-anchor ' + String(candidate.className || '');
+      return previous;
+    }
+    var anchor = document.createElement('div');
+    anchor.className = 'print-break-anchor print-manual-force-anchor ' + String(candidate.className || '');
+    anchor.setAttribute('aria-hidden', 'true');
+    anchor.dataset.printManualForceFor = candidate.id;
+    rootNode.parentNode.insertBefore(anchor, rootNode);
+    return anchor;
+  }
+
+  function manualForceRootForCandidate(candidate) {
+    if (!candidate || !candidate.node) return null;
+    return physicalBreakRootForNode(candidate.node) || candidate.node;
+  }
+
+  function shouldUseDirectBreakRoot(rootNode) {
+    if (!rootNode || rootNode.nodeType !== 1 || !rootNode.closest) return false;
+    if (rootNode.matches('li, p, figure, table, section, details, blockquote, h1, h2, h3, h4, h5, h6')) return true;
+    if (rootNode.matches('.indented')) return true;
+    if (rootNode.matches('.print-inline-block, .print-major-title, .print-table-block, .print-shortcut-block')) return true;
+    return !!rootNode.closest('li[data-print-block-type="list_item"], li');
+  }
+
   function registerCandidate(node, options) {
     if (!node || node.hasAttribute('data-print-break-id')) return;
     var id = options.id;
     ensurePersistentId(node, options.kind || 'candidate');
-    var breakRoot = options.breakNode || ensureBreakAnchor(physicalBreakRootForNode(node), id);
+    var physicalRoot = options.breakNode || physicalBreakRootForNode(node);
+    var breakRoot = physicalRoot;
+    var breakRootMode = node.dataset ? String(node.dataset.printBreakRootMode || '') : '';
+    var preferAnchorBreakRoot = !options.breakNode && breakRootMode === 'list_item';
+    if (!options.breakNode && (preferAnchorBreakRoot || !shouldUseDirectBreakRoot(physicalRoot))) {
+      breakRoot = ensureBreakAnchor(physicalRoot, id);
+    }
     node.dataset.printBreakId = id;
     node.dataset.printBreakKind = options.kind;
     node.dataset.printBreakClass = options.className;
@@ -1522,7 +2292,7 @@
   function applyBreakModeToCandidate(candidate) {
     var manualMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
     var autoBreak = candidate.node.dataset.printAutoBreak === 'on';
-    var resolved = manualMode === 'force' || (manualMode === 'auto' && autoBreak);
+    var resolved = manualMode === 'auto' && autoBreak;
     var breakNode = candidate.breakNode || candidate.node;
 
     candidate.node.dataset.printBreakMode = manualMode;
@@ -1533,7 +2303,7 @@
     if (breakNode) {
       breakNode.classList.toggle(candidate.className, resolved);
     }
-    candidate.node.dataset.printBreakResolved = resolved ? 'on' : 'off';
+    candidate.node.dataset.printBreakResolved = (manualMode === 'force' || resolved) ? 'on' : 'off';
   }
 
   function applyPullUpModeToCandidate(candidate) {
@@ -1554,12 +2324,58 @@
     candidate.node.classList.toggle('print-space-wide', spaceMode === 'wide');
   }
 
+  function clearForcedBreakAfterMarkers() {
+    Array.from(document.querySelectorAll('.print-force-break-after')).forEach(function (node) {
+      node.classList.remove('print-force-break-after');
+    });
+  }
+
+  function applyManualForceAnchors() {
+    clearManualForceAnchors();
+    breakCandidates.forEach(function (candidate) {
+      if (!candidate || !candidate.node || !candidate.node.dataset) return;
+      var manualMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
+      if (manualMode !== 'force') return;
+      var root = manualForceRootForCandidate(candidate);
+      if (!root || !root.parentNode) return;
+      ensureManualForceAnchor(root, candidate);
+    });
+  }
+
+  function physicalBreakAfterRootForCandidate(candidate) {
+    if (!candidate || !candidate.node) return null;
+    var root = physicalBreakRootForNode(candidate.node);
+    if (root && root.nodeType === 1 && root.matches && root.matches('.print-break-anchor')) {
+      return candidate.node;
+    }
+    return root || candidate.node;
+  }
+
+  function applyForcedBreakAfterMarkers() {
+    clearForcedBreakAfterMarkers();
+    breakCandidates.forEach(function (candidate) {
+      if (!candidate || !candidate.node || !candidate.node.dataset) return;
+      var manualMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
+      if (manualMode !== 'force') return;
+      var breakRootMode = String(candidate.node.dataset.printBreakRootMode || '');
+      var blockType = blockTypeFromContract(candidate.node);
+      if (breakRootMode !== 'wrapper_segment' && blockType !== 'list_item_heading') return;
+      var previous = previousCandidateInOrder(candidate);
+      if (!previous || !previous.node) return;
+      var previousRoot = physicalBreakAfterRootForCandidate(previous);
+      if (!previousRoot || !previousRoot.classList) return;
+      previousRoot.classList.add('print-force-break-after');
+    });
+  }
+
   function applyResolvedBreakModes() {
     breakCandidates.forEach(function (candidate) {
       applyBreakModeToCandidate(candidate);
       applyPullUpModeToCandidate(candidate);
       applySpaceModeToCandidate(candidate);
     });
+    applyManualForceAnchors();
+    applyForcedBreakAfterMarkers();
   }
 
   function getPrintMetrics() {
@@ -1626,8 +2442,8 @@
   function candidateManualLabel(candidate) {
     var mode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || 'auto');
     if (mode === 'force') return '수동: 여기서 시작';
-    if (candidatePullUpEnabled(candidate)) return '수동: 위로 당김';
-    return '수동: 해제';
+    if (candidatePullUpEnabled(candidate)) return '수동: 앞에 붙이기';
+    return '수동: 기본 흐름';
   }
 
   function candidateSpaceLabel(candidate) {
@@ -1733,6 +2549,7 @@
     if (editorPageSelect && selectedTargetState.pageNumber) {
       editorPageSelect.value = String(selectedTargetState.pageNumber);
     }
+    scheduleFigureToolStateRefresh();
   }
 
   function setSelectedTarget(nextState, options) {
@@ -1954,6 +2771,11 @@
     return node && node.closest ? node.closest('.pagedjs_page[data-page-number]') : null;
   }
 
+  function pageNumberFromNode(pageNode) {
+    if (!pageNode || !pageNode.getAttribute) return 0;
+    return parseInt(pageNode.getAttribute('data-page-number') || '0', 10) || 0;
+  }
+
   function visibleRenderedPageNode() {
     var viewportTop = window.scrollY || window.pageYOffset || 0;
     var viewportBottom = viewportTop + (window.innerHeight || 0);
@@ -2019,6 +2841,7 @@
       page_number: String(pageNumber || ''),
       intent: String(config.intent || ''),
       action_event_id: String(config.actionEventId || lastLearningActionEventId() || ''),
+      blocker_attempt: parseInt(config.blockerAttempt || '0', 10) || 0,
       target_offset_px: clampNumber(targetOffsetPx, 56, Math.max(96, (window.innerHeight || 720) - 96)),
       viewport_anchor: captureViewportAnchor({ preferredNode: fallbackNode || pageNode || null }),
       selection: currentSelectedTarget(),
@@ -2026,12 +2849,84 @@
     };
   }
 
+  function reloadDocumentWithCacheBust() {
+    try {
+      var nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('np_reload', String(Date.now()));
+      window.location.replace(nextUrl.toString());
+      return;
+    } catch (error) {
+      window.location.reload();
+    }
+  }
+
   function reloadWithPreservedFocus(options) {
     var payload = buildReloadFocusPayload(options || {});
     writeStoredReloadFocus(payload);
     setTimeout(function () {
-      window.location.reload();
+      reloadDocumentWithCacheBust();
     }, 120);
+  }
+
+  function previousCandidateInOrder(candidate) {
+    if (!candidate) return null;
+    var index = breakCandidates.findIndex(function (entry) {
+      return entry && entry.id === candidate.id;
+    });
+    if (index <= 0) return null;
+    return breakCandidates[index - 1] || null;
+  }
+
+  function forcedBreakBlockerForCandidate(candidate) {
+    if (!candidate || !candidate.node) return null;
+    var mode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
+    if (mode !== 'force') return null;
+
+    var previous = previousCandidateInOrder(candidate);
+    if (!previous || !previous.node) return null;
+
+    var currentPage = pageNumberForRenderedCandidate(candidate.id);
+    var previousPage = pageNumberForRenderedCandidate(previous.id);
+    if (!currentPage || !previousPage || currentPage !== previousPage) return null;
+
+    var blockType = blockTypeFromContract(previous.node);
+    if (blockType === 'image') {
+      return {
+        type: 'image',
+        candidate: previous,
+        pageNumber: currentPage
+      };
+    }
+    return null;
+  }
+
+  function nextImageScaleForForcedBreakBlocker(figureId) {
+    if (!figureId) return 0;
+    var current = currentStoredImageScale(figureId);
+    var recommendation = figureRecommendation(figureId);
+    var recommended = recommendation && recommendation.targetScalePct ? sanitizeImageScale(recommendation.targetScalePct) : current;
+    var stepped = sanitizeImageScale(current - 8);
+    var next = Math.min(recommended, stepped);
+    if (!(next < current)) return 0;
+    return next;
+  }
+
+  function maybeResolveForcedBreakBlocker(pending, targetNode) {
+    if (!pending || !targetNode) return false;
+    if (!/^(break_toggle|split_page)$/.test(String(pending.intent || ''))) return false;
+
+    var candidate = pending.candidate_id ? findCandidateById(pending.candidate_id) : null;
+    if (!candidate && pending.persist_id) {
+      candidate = findCandidateByPersistId(pending.persist_id);
+    }
+    if (!candidate) return false;
+
+    var blocker = forcedBreakBlockerForCandidate(candidate);
+    if (!blocker || blocker.type !== 'image' || !blocker.candidate || !blocker.candidate.node || !blocker.candidate.node.dataset) {
+      return false;
+    }
+    queueReloadNotice('위 사진이 페이지 안에서 안 잘리는 블록이라 같이 넘어옵니다. 사진 크기를 직접 줄이거나 위쪽 공백을 줄여야 분리됩니다');
+    return false;
   }
 
   function restorePendingReloadFocus() {
@@ -2052,6 +2947,9 @@
       targetNode = document.querySelector('.pagedjs_pages [data-print-persist-id="' + pending.persist_id + '"]');
     }
     if (targetNode) {
+      if (maybeResolveForcedBreakBlocker(pending, targetNode)) {
+        return true;
+      }
       document.body.dataset.printReloadFocusRestored = 'true';
       clearStoredReloadFocus();
       setTimeout(function () {
@@ -2092,6 +2990,7 @@
           }
         });
         updateEditorBannerStatus('방금 수정한 위치로 돌아왔습니다');
+        flushQueuedReloadNotice();
       }, 90);
       return true;
     }
@@ -2143,6 +3042,7 @@
             }
           });
           updateEditorBannerStatus('방금 보던 위치로 돌아왔습니다');
+          flushQueuedReloadNotice();
         }, 90);
         return true;
       }
@@ -2189,6 +3089,7 @@
             }
           });
           updateEditorBannerStatus('방금 수정한 페이지로 돌아왔습니다');
+          flushQueuedReloadNotice();
         }, 90);
         return true;
       }
@@ -2275,6 +3176,274 @@
     var status = editorBanner.querySelector('.print-editor-banner-status');
     if (!status) return;
     status.textContent = text;
+  }
+
+  function queueReloadNotice(text) {
+    queuedReloadNotice = String(text || '');
+  }
+
+  function flushQueuedReloadNotice() {
+    if (!queuedReloadNotice) return;
+    updateEditorBannerStatus(queuedReloadNotice);
+    queuedReloadNotice = '';
+  }
+
+  function recommendationEngineSource() {
+    var runtime = recommendationRuntime();
+    var model = runtime && runtime.model && runtime.model.tasks ? runtime.model.tasks : {};
+    return Object.keys(model).some(function (taskName) {
+      var section = model[taskName];
+      return section && typeof section.sample_count === 'number' && section.sample_count > 0;
+    }) ? 'rules+model' : 'rules';
+  }
+
+  function sortAutoOptimizeEntries(entries) {
+    return (entries || []).slice().sort(function (left, right) {
+      var leftScore = typeof left.score === 'number' ? left.score : 0;
+      var rightScore = typeof right.score === 'number' ? right.score : 0;
+      if (rightScore !== leftScore) return rightScore - leftScore;
+      return (left.pageNumber || 0) - (right.pageNumber || 0);
+    });
+  }
+
+  function pickTopEntriesPerPage(entries, limit) {
+    var picked = [];
+    var seenPages = {};
+    sortAutoOptimizeEntries(entries).forEach(function (entry) {
+      if (!entry) return;
+      if (limit && picked.length >= limit) return;
+      var pageKey = String(entry.pageNumber || 0);
+      if (seenPages[pageKey]) return;
+      seenPages[pageKey] = true;
+      picked.push(entry);
+    });
+    return picked;
+  }
+
+  function autoOptimizePlan() {
+    var breakEntries = [];
+    var gapEntries = [];
+    activeBreakCandidates().forEach(function (candidate) {
+      var recommendation = candidateRecommendation(candidate);
+      if (!recommendation) return;
+      var pageNumber = pageNumberForRenderedCandidate(candidate.id);
+      if (recommendation.break && recommendation.break.mode === 'force' && candidateCurrentBreakMode(candidate) !== 'force') {
+        breakEntries.push({
+          kind: 'break',
+          candidate: candidate,
+          recommendation: recommendation.break,
+          score: typeof recommendation.break.score === 'number' ? recommendation.break.score : 0,
+          pageNumber: pageNumber
+        });
+      }
+      if (recommendation.gap && recommendation.gap.units > candidateCurrentGapUnits(candidate)) {
+        gapEntries.push({
+          kind: 'gap',
+          candidate: candidate,
+          recommendation: recommendation.gap,
+          score: typeof recommendation.gap.score === 'number' ? recommendation.gap.score : 0,
+          pageNumber: pageNumber
+        });
+      }
+    });
+
+    var selectedBreaks = pickTopEntriesPerPage(breakEntries, 4);
+    var pagesWithBreak = {};
+    selectedBreaks.forEach(function (entry) {
+      pagesWithBreak[String(entry.pageNumber || 0)] = true;
+    });
+
+    var selectedGaps = pickTopEntriesPerPage(gapEntries.filter(function (entry) {
+      return !pagesWithBreak[String(entry.pageNumber || 0)];
+    }), 4);
+
+    var imageEntries = [];
+    distinctRenderedFigureIds().forEach(function (figureId) {
+      var recommendation = figureRecommendation(figureId);
+      if (!recommendation || !(recommendation.targetScalePct < currentStoredImageScale(figureId) - 2)) return;
+      var figure = persistedNodeById(figureId);
+      imageEntries.push({
+        kind: 'image',
+        figureId: figureId,
+        recommendation: recommendation,
+        score: typeof recommendation.score === 'number' ? recommendation.score : 0,
+        pageNumber: pageNumberFromNode(closestRenderedPageNode(figure))
+      });
+    });
+
+    var selectedImages = pickTopEntriesPerPage(imageEntries.filter(function (entry) {
+      return !pagesWithBreak[String(entry.pageNumber || 0)];
+    }), 4);
+
+    return {
+      breaks: selectedBreaks,
+      gaps: selectedGaps,
+      images: selectedImages
+    };
+  }
+
+  function autoOptimizeSummaryText(plan, passIndex, maxPasses) {
+    var parts = [];
+    if (plan.breaks.length) parts.push('새 페이지 ' + plan.breaks.length + '개');
+    if (plan.gaps.length) parts.push('빈칸 ' + plan.gaps.length + '개');
+    if (plan.images.length) parts.push('이미지 ' + plan.images.length + '개');
+    if (!parts.length) {
+      return '자동 정리 ' + passIndex + '/' + maxPasses + '회차: 더 적용할 추천이 없습니다';
+    }
+    return '자동 정리 ' + passIndex + '/' + maxPasses + '회차: ' + parts.join(', ') + ' 적용';
+  }
+
+  function runAutoOptimizePass(options) {
+    var config = options || {};
+    var passIndex = Math.max(1, parseInt(config.passIndex || '1', 10) || 1);
+    var maxPasses = Math.max(passIndex, parseInt(config.maxPasses || '3', 10) || 3);
+    var uiSource = String(config.uiSource || 'auto_optimize');
+    var plan = autoOptimizePlan();
+    var totalActions = plan.breaks.length + plan.gaps.length + plan.images.length;
+
+    if (!totalActions) {
+      clearStoredAutoOptimize();
+      updateEditorUiSummary();
+      updateEditorBannerStatus('자동 정리 완료: 더 적용할 추천이 없습니다');
+      return false;
+    }
+
+    pushHistorySnapshot('auto-optimize');
+    var targetNode = currentSelectedRenderedNode() || visibleRenderedPageNode();
+    var eventId = logLearningAction('auto_optimize', {
+      targetNode: targetNode,
+      before: {
+        pass_index: passIndex,
+        max_passes: maxPasses
+      },
+      after: {
+        break_count: plan.breaks.length,
+        gap_count: plan.gaps.length,
+        image_count: plan.images.length
+      },
+      ui: {
+        source: uiSource,
+        suggestion_source: recommendationEngineSource()
+      },
+      meta: buildRuntimeActionMeta(targetNode, {
+        intent: 'auto_optimize',
+        effect: {
+          pass_index: passIndex,
+          max_passes: maxPasses,
+          planned_break_count: plan.breaks.length,
+          planned_gap_count: plan.gaps.length,
+          planned_image_count: plan.images.length,
+          layout_before: snapshotRenderedLayout()
+        }
+      })
+    });
+
+    plan.breaks.forEach(function (entry) {
+      if (!entry || !entry.candidate) return;
+      entry.candidate.node.dataset.printBreakMode = 'force';
+      breakOverrideMap[entry.candidate.id] = 'force';
+      delete pullUpOverrideMap[entry.candidate.id];
+    });
+
+    plan.gaps.forEach(function (entry) {
+      if (!entry || !entry.candidate || !entry.recommendation) return;
+      var gapKey = entry.candidate.node && entry.candidate.node.dataset ? (entry.candidate.node.dataset.printBreakId || entry.candidate.node.dataset.printPersistId || '') : '';
+      if (!gapKey) return;
+      manualGapMap[gapKey] = Math.max(candidateCurrentGapUnits(entry.candidate), entry.recommendation.units);
+    });
+
+    plan.images.forEach(function (entry) {
+      if (!entry) return;
+      if (entry.recommendation.targetScalePct >= 100) {
+        delete imageScaleMap[entry.figureId];
+      } else {
+        imageScaleMap[entry.figureId] = entry.recommendation.targetScalePct;
+      }
+    });
+
+    writeStoredBreakOverrides();
+    writeStoredPullUpOverrides();
+    writeStoredGaps();
+    writeStoredImageScales();
+    applyResolvedBreakModes();
+    applyStoredManualGaps();
+    applyStoredImageScales();
+    refreshEditorList();
+    refreshNavigatorOptions();
+    flushLearningEvents(true);
+
+    var summaryText = autoOptimizeSummaryText(plan, passIndex, maxPasses);
+    var nextPass = passIndex + 1;
+    if (nextPass <= maxPasses) {
+      writeStoredAutoOptimize({
+        at: Date.now(),
+        mode: 'continue',
+        next_pass: nextPass,
+        max_passes: maxPasses,
+        message: summaryText,
+        ui_source: uiSource
+      });
+    } else {
+      writeStoredAutoOptimize({
+        at: Date.now(),
+        mode: 'complete',
+        message: summaryText + ' 후 다시 계산을 마쳤습니다'
+      });
+    }
+    updateEditorBannerStatus(summaryText + ' 후 다시 계산 중…');
+    reloadWithPreservedFocus({ intent: 'auto_optimize', actionEventId: eventId });
+    return true;
+  }
+
+  function startAutoOptimize(uiSource) {
+    clearStoredAutoOptimize();
+    runAutoOptimizePass({
+      passIndex: 1,
+      maxPasses: 3,
+      uiSource: uiSource || 'auto_optimize_button'
+    });
+  }
+
+  function restorePendingAutoOptimize() {
+    var pending = readStoredAutoOptimize();
+    if (!pending) return false;
+    if (pending.at && Date.now() - pending.at > 120000) {
+      clearStoredAutoOptimize();
+      return false;
+    }
+    if (pending.mode === 'complete') {
+      clearStoredAutoOptimize();
+      updateEditorUiSummary();
+      updateEditorBannerStatus(pending.message || '자동 정리 완료');
+      return true;
+    }
+    if (pending.mode !== 'continue') {
+      clearStoredAutoOptimize();
+      return false;
+    }
+    clearStoredAutoOptimize();
+    runAutoOptimizePass({
+      passIndex: pending.next_pass || 1,
+      maxPasses: pending.max_passes || 3,
+      uiSource: pending.ui_source || 'auto_optimize_resume'
+    });
+    return true;
+  }
+
+  function scheduleAutoOptimizeResume() {
+    if (autoOptimizeResumeScheduled) return;
+    autoOptimizeResumeScheduled = true;
+    [140, 420, 1200].forEach(function (delay, index, delays) {
+      setTimeout(function () {
+        if (restorePendingAutoOptimize()) {
+          autoOptimizeResumeScheduled = false;
+          return;
+        }
+        if (index === delays.length - 1) {
+          autoOptimizeResumeScheduled = false;
+        }
+      }, delay);
+    });
   }
 
   function renderedCandidateLookup() {
@@ -2419,18 +3588,18 @@
 
     if (editorNote) {
       if (metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0) {
-        editorNote.textContent = '추천 블록 ' + metrics.outstandingRecommendationCount + '개와 이미지 추천 ' + metrics.imageRecommendationCount + '개가 남아 있습니다. 먼저 추천만 보기로 빠르게 훑어보세요.';
+        editorNote.textContent = '1. 자동 정리 2. 문제 위치로 이동 3. 남은 곳만 수정하세요. 현재 추천 블록 ' + metrics.outstandingRecommendationCount + '개, 이미지 추천 ' + metrics.imageRecommendationCount + '개가 남아 있습니다.';
       } else if (metrics.manualCandidateCount > 0 || metrics.imageEditCount > 0 || metrics.textEditCount > 0 || metrics.deletedCount > 0) {
-        editorNote.textContent = '수동 조정이 반영된 상태입니다. 되돌리기 전에는 추천보다 현재 편집 내용을 우선으로 유지합니다.';
+        editorNote.textContent = '수동 조정이 반영된 상태입니다. 블록마다 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 다듬을 수 있습니다.';
       } else {
-        editorNote.textContent = '아직 수동 조정이 없습니다. 추천을 먼저 적용한 뒤 필요한 부분만 미세 조정하면 로그 품질이 더 좋아집니다.';
+        editorNote.textContent = '자동 정리는 초안입니다. 실제 마감은 블록을 눌러 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 맞추세요.';
       }
     }
 
     if (editorBannerRecommendationButton) {
       var hasRecommendation = metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0;
       editorBannerRecommendationButton.disabled = !hasRecommendation;
-      editorBannerRecommendationButton.textContent = hasRecommendation ? '추천으로 이동' : '추천 없음';
+      editorBannerRecommendationButton.textContent = hasRecommendation ? '2. 문제 위치' : '문제 없음';
     }
   }
 
@@ -2443,11 +3612,11 @@
     }
 
     if (editorLauncher) {
-      editorLauncher.textContent = isOpen ? '패널 닫기 (E)' : '편집 패널 (E)';
+      editorLauncher.textContent = isOpen ? '조정 닫기 (E)' : '블록 조정 (E)';
     }
 
     if (editorPanelToggleButton) {
-      editorPanelToggleButton.textContent = isOpen ? '패널 닫기' : '편집 패널';
+      editorPanelToggleButton.textContent = isOpen ? '조정 닫기' : '3. 블록 조정';
     }
 
     if (editorPanel) {
@@ -2475,8 +3644,15 @@
 
   function setEditorPanelOpen(open) {
     editorUiState.open = !!open;
+    if (editorUiState.open && sanitizeEditorFilter(editorUiState.filter || 'all') === 'all') {
+      var metrics = buildEditorMetrics();
+      if (metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0) {
+        editorUiState.filter = 'recommended';
+      }
+    }
     writeStoredEditorUiState();
     syncEditorUiControls();
+    refreshEditorList();
   }
 
   function toggleEditorPanel(forceOpen) {
@@ -2623,6 +3799,7 @@
     }
     directManipulationRetryTimer = setTimeout(function () {
       directManipulationRetryTimer = null;
+      restoreStoredRenderedLayoutOnce();
       installDirectPageManipulation();
       refreshNavigatorOptions();
     }, typeof delay === 'number' ? delay : 120);
@@ -2731,21 +3908,73 @@
     writeStoredRenderedOrder(snapshotRenderedLayout());
   }
 
+  function firstStoredLayoutCandidateId(pageEntry) {
+    if (!pageEntry || !Array.isArray(pageEntry.ids)) return '';
+    return pageEntry.ids.filter(Boolean)[0] || '';
+  }
+
+  function storedLayoutBoundaryCandidateIds(layout) {
+    return (Array.isArray(layout) ? layout : []).map(firstStoredLayoutCandidateId).filter(Boolean).slice(1);
+  }
+
   function applyStoredRenderedLayout() {
     var stored = readStoredRenderedOrder();
-    if (!Array.isArray(stored) || !stored.length) return;
-
-    stored.forEach(function (pageEntry) {
-      var pageNode = document.querySelector('.pagedjs_pages .pagedjs_page[data-page-number="' + String(pageEntry.page || '') + '"]');
-      var flowRoot = renderedFlowRootForPage(pageNode);
-      if (!pageNode || !flowRoot || !Array.isArray(pageEntry.ids)) return;
-
-      pageEntry.ids.forEach(function (id) {
-        var node = findRenderedCandidateNode(id);
-        if (!node || node === flowRoot || node.contains(flowRoot)) return;
-        flowRoot.appendChild(node);
-      });
+    if (!Array.isArray(stored) || !stored.length) return false;
+    var movedAny = false;
+    storedLayoutBoundaryCandidateIds(stored).forEach(function (candidateId) {
+      var node = findRenderedCandidateNode(candidateId);
+      var pageNode = closestRenderedPageNode(node);
+      if (!node || !pageNode) return;
+      if (firstLastCandidateIdsInPage(pageNode).first === candidateId) return;
+      if (splitRenderedPageAtNodeForRestore(node)) {
+        movedAny = true;
+      }
     });
+
+    if (!movedAny) return false;
+
+    removeEmptyRenderedPages();
+    renumberRenderedPages();
+    Array.from(document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]')).forEach(function (pageNode) {
+      expandRenderedPageFrame(pageNode);
+    });
+    installDirectPageManipulation();
+    refreshNavigatorOptions();
+    refreshEditorList();
+    persistRenderedLayout();
+    return true;
+  }
+
+  function hasPersistedEditState() {
+    return !!(
+      Object.keys(breakOverrideMap || {}).length ||
+      Object.keys(spaceOverrideMap || {}).length ||
+      Object.keys(pullUpOverrideMap || {}).length ||
+      Object.keys(textOverrideMap || {}).length ||
+      Object.keys(deletedNodeMap || {}).length ||
+      Object.keys(manualGapMap || {}).length ||
+      Object.keys(imageScaleMap || {}).length
+    );
+  }
+
+  function restoreStoredRenderedLayoutOnce() {
+    if (storedRenderedLayoutApplied) return false;
+    if (hasPersistedEditState()) {
+      storedRenderedLayoutApplied = true;
+      return false;
+    }
+    var stored = readStoredRenderedOrder();
+    if (!Array.isArray(stored) || !stored.length) {
+      storedRenderedLayoutApplied = true;
+      return false;
+    }
+    var storedCandidateCount = stored.reduce(function (total, pageEntry) {
+      return total + (Array.isArray(pageEntry && pageEntry.ids) ? pageEntry.ids.filter(Boolean).length : 0);
+    }, 0);
+    var liveCandidateCount = document.querySelectorAll('.pagedjs_pages [data-print-break-id]').length;
+    if (liveCandidateCount < storedCandidateCount) return false;
+    storedRenderedLayoutApplied = true;
+    return applyStoredRenderedLayout();
   }
 
   function currentDragCandidateId(event) {
@@ -2916,18 +4145,25 @@
     var anchorPersistId = firstUniquePersistId || firstPersistId || lastUniquePersistId || '';
     var primaryLabel = pageLabelForPersistId(pageNode, anchorPersistId, '페이지 ' + (pageNode.getAttribute('data-page-number') || '?'));
     var trailingLabel = pageLabelForPersistId(pageNode, lastUniquePersistId || lastPersistId, primaryLabel);
+    var mergeableCandidateId = candidateIds.find(function (candidateId) {
+      var persistId = persistedIdFromCandidateId(candidateId);
+      return persistId && sharedWithPrevious.indexOf(persistId) === -1;
+    }) || '';
+    var deletablePersistIds = persistIds.filter(function (persistId) {
+      return sharedWithPrevious.indexOf(persistId) === -1 && sharedWithNext.indexOf(persistId) === -1;
+    });
     var continuationBadges = [];
     if (continuedFromPrevious) continuationBadges.push('앞 페이지에서 이어짐');
     if (continuesToNext) continuationBadges.push('다음 페이지로 이어짐');
 
-    var mergeCandidateId = !continuedFromPrevious ? firstCandidateId : '';
+    var mergeCandidateId = mergeableCandidateId || (!continuedFromPrevious ? firstCandidateId : '');
     var canMerge = !!mergeCandidateId && parseInt(pageNode.getAttribute('data-page-number') || '0', 10) > 1;
-    var canDelete = !!persistIds.length && !continuedFromPrevious && !continuesToNext;
+    var canDelete = deletablePersistIds.length > 0;
 
     var mergeHelpText = '앞 페이지로 자연스럽게 이어 붙입니다';
     if (!canMerge) {
-      if (continuedFromPrevious) {
-        mergeHelpText = '이 페이지는 앞 페이지 내용이 이어져 시작해서 페이지 합치기를 제한합니다';
+      if (continuedFromPrevious && !mergeableCandidateId) {
+        mergeHelpText = '이 페이지는 앞 페이지에서 이어진 내용만으로 시작해서 붙일 독립 블록이 없습니다';
       } else if (!firstCandidateId) {
         mergeHelpText = '페이지 시작 기준 블록을 찾지 못했습니다';
       } else {
@@ -2935,12 +4171,14 @@
       }
     }
 
-    var deleteHelpText = '현재 페이지에만 있는 내용을 삭제합니다';
+    var deleteHelpText = continuesToNext || continuedFromPrevious
+      ? '현재 페이지의 고유 내용만 삭제하고, 앞뒤 페이지와 이어진 블록은 유지합니다'
+      : '현재 페이지에만 있는 내용을 삭제합니다';
     if (!canDelete) {
       if (!persistIds.length) {
         deleteHelpText = '삭제할 페이지 내용이 없습니다';
       } else {
-        deleteHelpText = '이 페이지에는 앞뒤 페이지와 이어진 블록이 있어 페이지 단위 삭제를 제한합니다';
+        deleteHelpText = '이 페이지에는 앞뒤 페이지와 공유되지 않은 고유 블록이 없어 삭제할 내용이 없습니다';
       }
     }
 
@@ -2964,6 +4202,7 @@
       persistCount: persistIds.length,
       sharedWithPrevious: sharedWithPrevious,
       sharedWithNext: sharedWithNext,
+      deletablePersistIds: deletablePersistIds,
       continuedFromPrevious: continuedFromPrevious,
       continuesToNext: continuesToNext,
       canMerge: canMerge,
@@ -3008,6 +4247,13 @@
   function cloneRenderedPageShell(pageNode) {
     var clone = pageNode.cloneNode(true);
     clearEditorArtifacts(clone);
+    clone.removeAttribute('data-print-page-selection-bound');
+    clone.removeAttribute('data-print-page-role');
+    clone.removeAttribute('data-print-page-label');
+    clone.removeAttribute('data-print-page-signature');
+    clone.removeAttribute('data-print-page-anchor-persist-id');
+    clone.removeAttribute('data-print-manual-page');
+    clone.removeAttribute('data-print-manual-split-candidate');
     var article = clone.querySelector('article.page');
     if (article) {
       var header = article.querySelector('header');
@@ -3076,18 +4322,699 @@
     return removedPages;
   }
 
-  function splitRenderedPageAtNode(renderedCandidate) {
+  function hasMeaningfulPrefixBeforeNode(parentNode, targetNode) {
+    if (!parentNode || !targetNode) return false;
+    var childNodes = Array.from(parentNode.childNodes || []);
+    for (var index = 0; index < childNodes.length; index += 1) {
+      var child = childNodes[index];
+      if (child === targetNode) {
+        return false;
+      }
+      if (child && child.nodeType === 1 && child.contains && child.contains(targetNode)) {
+        return hasMeaningfulPrefixBeforeNode(child, targetNode);
+      }
+      if (child && child.nodeType === 1 && hasMeaningfulRenderedContent(child)) {
+        return true;
+      }
+      if (child && child.nodeType === 3 && normalizePrintText(child.textContent || '')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function renderedSplitContainerClone(node) {
+    if (!node || node.nodeType !== 1 || !node.cloneNode) return null;
+    var clone = node.cloneNode(false);
+    if (clone.classList) {
+      clone.classList.remove('print-selected-target');
+      clone.classList.remove('print-editor-target-highlight');
+    }
+    clone.removeAttribute('id');
+    clone.removeAttribute('data-print-break-id');
+    clone.removeAttribute('data-print-edit-id');
+    clone.removeAttribute('data-print-selection-bound');
+    clone.dataset.printRenderedFragment = 'true';
+    return clone;
+  }
+
+  function isCalloutDecorationNode(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (node.hasAttribute('data-print-persist-id') || node.hasAttribute('data-print-break-id')) return false;
+    if (node.querySelector && node.querySelector('[data-print-persist-id], [data-print-break-id], p, figure, table, ul, ol, li, details, blockquote, pre, h1, h2, h3, h4, h5, h6')) return false;
+    if (node.querySelector && node.querySelector('.icon, img, svg')) return true;
+    return /^[^\w\u3131-\u318e\uac00-\ud7a3A-Za-z0-9]+$/.test(normalizePrintText(node.textContent || ''));
+  }
+
+  function cloneCalloutDecorationPrefix(sourceParent, splitChild, targetParent) {
+    if (!sourceParent || !splitChild || !targetParent) return;
+    if (!(sourceParent.matches && sourceParent.matches('.callout'))) return;
+    var children = Array.from(sourceParent.children || []);
+    var splitIndex = children.indexOf(splitChild);
+    if (splitIndex <= 0) return;
+    children.slice(0, splitIndex).forEach(function (child) {
+      if (!isCalloutDecorationNode(child)) return;
+      var shellClone = child.cloneNode(true);
+      shellClone.removeAttribute('id');
+      shellClone.dataset.printRenderedShell = 'true';
+      targetParent.appendChild(shellClone);
+    });
+  }
+
+  function calloutContentContainer(node) {
+    if (!node || node.nodeType !== 1 || !(node.matches && node.matches('.callout'))) return null;
+    var children = Array.from(node.children || []).filter(function (child) {
+      return child && child.nodeType === 1 && !isEditorArtifactNode(child);
+    });
+    if (!children.length) return null;
+    var content = children.find(function (child) {
+      return !isCalloutDecorationNode(child);
+    });
+    return content || children[children.length - 1] || null;
+  }
+
+  function canMergeAdjacentCalloutFragments(left, right) {
+    if (!left || !right || left.nodeType !== 1 || right.nodeType !== 1) return false;
+    if (!(left.matches && left.matches('.callout') && right.matches && right.matches('.callout'))) return false;
+    if ((left.dataset && left.dataset.printPersistId || '') !== (right.dataset && right.dataset.printPersistId || '')) return false;
+    return !!(left.dataset && left.dataset.printPersistId);
+  }
+
+  function mergeAdjacentCalloutFragments(parentNode) {
+    if (!parentNode || !parentNode.children) return false;
+    var changedAny = false;
+    var cursor = parentNode.firstElementChild;
+    while (cursor) {
+      var next = cursor.nextElementSibling;
+      if (canMergeAdjacentCalloutFragments(cursor, next)) {
+        var leftContent = calloutContentContainer(cursor);
+        var rightContent = calloutContentContainer(next);
+        if (leftContent && rightContent) {
+          while (rightContent.firstChild) {
+            leftContent.appendChild(rightContent.firstChild);
+          }
+          next.remove();
+          changedAny = true;
+          continue;
+        }
+      }
+      cursor = next;
+    }
+    Array.from(parentNode.children || []).forEach(function (child) {
+      if (mergeAdjacentCalloutFragments(child)) {
+        changedAny = true;
+      }
+    });
+    return changedAny;
+  }
+
+  function directMeaningfulElementChildren(node) {
+    if (!node || !node.children) return [];
+    return Array.from(node.children || []).filter(function (child) {
+      return child && child.nodeType === 1 && !isEditorArtifactNode(child);
+    });
+  }
+
+  function firstBoundaryPersistedChild(node) {
+    var children = directMeaningfulElementChildren(node);
+    for (var index = 0; index < children.length; index += 1) {
+      var child = children[index];
+      if (child && child.dataset && child.dataset.printPersistId) return child;
+      var nested = firstBoundaryPersistedChild(child);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function lastBoundaryPersistedChild(node) {
+    var children = directMeaningfulElementChildren(node);
+    for (var index = children.length - 1; index >= 0; index -= 1) {
+      var child = children[index];
+      if (child && child.dataset && child.dataset.printPersistId) return child;
+      var nested = lastBoundaryPersistedChild(child);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function isRenderedFragmentNode(node) {
+    return !!(node && node.dataset && node.dataset.printRenderedFragment === 'true');
+  }
+
+  function childBoundaryPersistIds(node) {
+    return directMeaningfulElementChildren(node).map(function (child) {
+      var boundary = child && child.dataset && child.dataset.printPersistId ? child : firstBoundaryPersistedChild(child);
+      return boundary && boundary.dataset ? boundary.dataset.printPersistId || '' : '';
+    }).filter(Boolean);
+  }
+
+  function canMergeAdjacentFlowSegments(left, right) {
+    if (!left || !right || left.nodeType !== 1 || right.nodeType !== 1) return false;
+    if (!(left.classList && left.classList.contains('print-flow-segment'))) return false;
+    if (!(right.classList && right.classList.contains('print-flow-segment'))) return false;
+    if (left.tagName !== right.tagName) return false;
+    if ((left.className || '') !== (right.className || '')) return false;
+    var leftIds = childBoundaryPersistIds(left);
+    var rightIds = childBoundaryPersistIds(right);
+    if (!leftIds.length || !rightIds.length) return false;
+    return leftIds.some(function (id) {
+      return rightIds.indexOf(id) !== -1;
+    }) || leftIds[leftIds.length - 1] === rightIds[0];
+  }
+
+  function mergeRenderedWrapperChildren(left, right) {
+    if (!left || !right || left === right) return false;
+    while (right.firstChild) {
+      left.appendChild(right.firstChild);
+    }
+    right.remove();
+    return true;
+  }
+
+  function mergeAdjacentFlowSegments(parentNode) {
+    if (!parentNode || !parentNode.children) return false;
+    var changedAny = false;
+    var cursor = parentNode.firstElementChild;
+    while (cursor) {
+      var next = cursor.nextElementSibling;
+      if (canMergeAdjacentFlowSegments(cursor, next)) {
+        mergeRenderedWrapperChildren(cursor, next);
+        changedAny = true;
+        continue;
+      }
+      if (mergeAdjacentFlowSegments(cursor)) {
+        changedAny = true;
+      }
+      cursor = next;
+    }
+    return changedAny;
+  }
+
+  function canMergeAdjacentListWrappers(left, right) {
+    if (!left || !right || left.nodeType !== 1 || right.nodeType !== 1) return false;
+    if (!(left.tagName === 'UL' || left.tagName === 'OL')) return false;
+    if (left.tagName !== right.tagName) return false;
+    if ((left.className || '') !== (right.className || '')) return false;
+    var leftLast = lastBoundaryPersistedChild(left);
+    var rightFirst = firstBoundaryPersistedChild(right);
+    if (!leftLast || !rightFirst) return false;
+    return (leftLast.dataset.printPersistId || '') === (rightFirst.dataset.printPersistId || '');
+  }
+
+  function mergeRenderedListWrapper(left, right) {
+    if (!left || !right || left === right) return false;
+    while (right.firstChild) {
+      left.appendChild(right.firstChild);
+    }
+    right.remove();
+    return true;
+  }
+
+  function mergeAdjacentListWrappers(parentNode) {
+    if (!parentNode || !parentNode.children) return false;
+    var changedAny = false;
+    var cursor = parentNode.firstElementChild;
+    while (cursor) {
+      var next = cursor.nextElementSibling;
+      if (canMergeAdjacentListWrappers(cursor, next)) {
+        mergeRenderedListWrapper(cursor, next);
+        changedAny = true;
+        continue;
+      }
+      if (mergeAdjacentListWrappers(cursor)) {
+        changedAny = true;
+      }
+      cursor = next;
+    }
+    return changedAny;
+  }
+
+  function majorItemBodyContainer(node) {
+    if (!node || !(node.matches && node.matches('li.print-major-item'))) return null;
+    var title = directChildByClass(node, 'print-major-title');
+    var body = directChildByClass(node, 'print-major-body');
+    if (!body) {
+      body = document.createElement('div');
+      body.className = 'print-major-body';
+      if (title && title.nextSibling) {
+        node.insertBefore(body, title.nextSibling);
+      } else {
+        node.appendChild(body);
+      }
+    }
+    directMeaningfulElementChildren(node).forEach(function (child) {
+      if (child === title || child === body) return;
+      body.appendChild(child);
+    });
+    return body;
+  }
+
+  function mergeRenderedContainerChildren(left, right) {
+    if (!left || !right || left === right) return false;
+    var changedAny = false;
+    Array.from(right.childNodes || []).forEach(function (child) {
+      if (!child) return;
+      if (child.nodeType !== 1) {
+        left.appendChild(child);
+        changedAny = true;
+        return;
+      }
+      if (isEditorArtifactNode(child)) {
+        child.remove();
+        changedAny = true;
+        return;
+      }
+
+      var targetParent = left;
+      if (left.matches && left.matches('li.print-major-item') && !(child.classList && child.classList.contains('print-major-title'))) {
+        targetParent = majorItemBodyContainer(left) || left;
+      }
+
+      var matching = null;
+      var childPersistId = child.dataset && child.dataset.printPersistId || '';
+      if (childPersistId) {
+        matching = directMeaningfulElementChildren(targetParent).find(function (existing) {
+          return existing !== child &&
+            existing.tagName === child.tagName &&
+            (existing.dataset && existing.dataset.printPersistId || '') === childPersistId;
+        }) || null;
+      }
+      if (!matching && child.classList) {
+        if (child.classList.contains('print-major-title')) {
+          matching = directChildByClass(targetParent, 'print-major-title');
+        } else if (child.classList.contains('print-major-body')) {
+          matching = directChildByClass(targetParent, 'print-major-body');
+        }
+      }
+      if (!matching && (child.tagName === 'UL' || child.tagName === 'OL')) {
+        var siblingLists = directMeaningfulElementChildren(targetParent).filter(function (existing) {
+          return existing.tagName === child.tagName;
+        });
+        var lastList = siblingLists.length ? siblingLists[siblingLists.length - 1] : null;
+        if (canMergeAdjacentListWrappers(lastList, child)) {
+          matching = lastList;
+        }
+      }
+
+      if (matching && matching !== child) {
+        if (matching.tagName === 'UL' || matching.tagName === 'OL') {
+          mergeRenderedListWrapper(matching, child);
+        } else {
+          mergeRenderedContainerChildren(matching, child);
+          child.remove();
+        }
+        changedAny = true;
+        return;
+      }
+
+      targetParent.appendChild(child);
+      changedAny = true;
+    });
+
+    if (right.parentNode) {
+      right.remove();
+      changedAny = true;
+    }
+    if (left.matches && left.matches('li.print-major-item')) {
+      majorItemBodyContainer(left);
+    }
+    return changedAny;
+  }
+
+  function canMergeAdjacentPersistedFragments(left, right) {
+    if (!left || !right || left.nodeType !== 1 || right.nodeType !== 1) return false;
+    if (left.tagName !== right.tagName) return false;
+    if (left.matches && left.matches('.callout')) return false;
+    var leftPersistId = left.dataset && left.dataset.printPersistId || '';
+    var rightPersistId = right.dataset && right.dataset.printPersistId || '';
+    if (!leftPersistId || leftPersistId !== rightPersistId) return false;
+    return true;
+  }
+
+  function mergeAdjacentPersistedFragments(parentNode) {
+    if (!parentNode || !parentNode.children) return false;
+    var changedAny = false;
+    var cursor = parentNode.firstElementChild;
+    while (cursor) {
+      var next = cursor.nextElementSibling;
+      if (canMergeAdjacentPersistedFragments(cursor, next)) {
+        mergeRenderedContainerChildren(cursor, next);
+        changedAny = true;
+        continue;
+      }
+      if (mergeAdjacentPersistedFragments(cursor)) {
+        changedAny = true;
+      }
+      cursor = next;
+    }
+    return changedAny;
+  }
+
+  function normalizeRenderedStructuralFragments(root) {
+    var scope = root || renderedPagesRoot();
+    if (!scope) return false;
+    var changedAny = false;
+    var passChanged = false;
+    do {
+      passChanged = false;
+      if (mergeAdjacentFlowSegments(scope)) passChanged = true;
+      if (mergeAdjacentPersistedFragments(scope)) passChanged = true;
+      if (mergeAdjacentCalloutFragments(scope)) passChanged = true;
+      if (mergeAdjacentListWrappers(scope)) passChanged = true;
+      changedAny = changedAny || passChanged;
+    } while (passChanged);
+    return changedAny;
+  }
+
+  function splitRenderedTailIntoContainer(sourceParent, splitNode, targetParent) {
+    if (!sourceParent || !splitNode || !targetParent) return false;
+    var movedAny = false;
+    var splitReached = false;
+    Array.from(sourceParent.childNodes || []).forEach(function (child) {
+      if (!splitReached) {
+        if (child === splitNode) {
+          splitReached = true;
+          targetParent.appendChild(child);
+          movedAny = true;
+          return;
+        }
+        if (child && child.nodeType === 1 && child.contains && child.contains(splitNode)) {
+          splitReached = true;
+          var childClone = renderedSplitContainerClone(child);
+          if (!childClone) return;
+          cloneCalloutDecorationPrefix(sourceParent, child, targetParent);
+          if (splitRenderedTailIntoContainer(child, splitNode, childClone) || childClone.childNodes.length) {
+            targetParent.appendChild(childClone);
+            movedAny = true;
+          }
+          pruneEmptyAncestors(child, sourceParent);
+          return;
+        }
+        return;
+      }
+      targetParent.appendChild(child);
+      movedAny = true;
+    });
+    return movedAny;
+  }
+
+  function focusManualPageSplitTarget(targetNode) {
+    if (!targetNode) return;
+    var targetSelection = selectionForNode(targetNode);
+    if (targetSelection) {
+      setSelectedTarget(targetSelection, { silent: true });
+    } else {
+      syncSelectedRenderedState();
+    }
+    restoreViewportAnchor(null, targetNode, {
+      behavior: 'auto',
+      highlight: false,
+      offsetTopPx: 96
+    });
+    highlightAndScrollToNode(targetNode, {
+      behavior: 'smooth',
+      offsetTopPx: 96
+    });
+  }
+
+  function syncManualPageSplitPersistence(candidate) {
+    if (!candidate || !candidate.node || !candidate.node.dataset) return;
+    candidate.node.dataset.printBreakMode = 'force';
+    breakOverrideMap[candidate.id] = 'force';
+    delete pullUpOverrideMap[candidate.id];
+    writeStoredBreakOverrides();
+    writeStoredPullUpOverrides();
+  }
+
+  function clearManualPageSplitPersistence(candidateId) {
+    if (!candidateId) return;
+    var candidate = findCandidateById(candidateId);
+    if (candidate && candidate.node && candidate.node.dataset) {
+      candidate.node.dataset.printBreakMode = 'auto';
+    }
+    delete breakOverrideMap[candidateId];
+    delete pullUpOverrideMap[candidateId];
+    writeStoredBreakOverrides();
+    writeStoredPullUpOverrides();
+  }
+
+  function mergeRenderedPageLive(pageNode) {
+    if (!pageNode) return false;
+    var previousPage = pageNode.previousElementSibling && pageNode.previousElementSibling.matches && pageNode.previousElementSibling.matches('.pagedjs_page[data-page-number]') ? pageNode.previousElementSibling : null;
+    if (!previousPage) {
+      updateEditorBannerStatus('앞 페이지가 없습니다');
+      return false;
+    }
+    var currentContent = renderedContentRoot(pageNode);
+    var previousContent = renderedContentRoot(previousPage);
+    if (!currentContent || !previousContent) {
+      updateEditorBannerStatus('페이지 내용을 합칠 수 없습니다');
+      return false;
+    }
+
+    var pageMeta = describeRenderedPage(pageNode);
+    pushRenderedHistorySnapshot();
+    var splitCandidateId = pageNode.dataset ? pageNode.dataset.printManualSplitCandidate || '' : '';
+    var mergeCandidate = null;
+    var currentMode = 'auto';
+    var currentSpaceMode = 'auto';
+    var currentGapUnits = 0;
+    var gapId = '';
+    var mergePersistId = '';
+    var mergeIntent = splitCandidateId ? 'merge_manual_page' : 'merge_with_previous_page';
+    var focusNodeBefore = findRenderedCandidateNode(splitCandidateId) || currentContent.firstElementChild || pageNode;
+
+    if (!splitCandidateId) {
+      if (!pageMeta.canMerge) {
+        updateEditorBannerStatus(pageMeta.mergeHelpText);
+        return false;
+      }
+      mergeCandidate = mergeCandidateForPage(pageNode);
+      if (!mergeCandidate) {
+        updateEditorBannerStatus(pageMeta.mergeHelpText);
+        return false;
+      }
+      currentMode = sanitizeBreakMode(mergeCandidate.node.dataset.printBreakMode || breakOverrideMap[mergeCandidate.id] || 'auto');
+      currentSpaceMode = sanitizeSpaceMode(mergeCandidate.node.dataset.printSpaceMode || spaceOverrideMap[mergeCandidate.id] || 'auto');
+      gapId = mergeCandidate.node.dataset ? (mergeCandidate.node.dataset.printBreakId || mergeCandidate.node.dataset.printPersistId || '') : '';
+      currentGapUnits = gapId ? (parseInt(manualGapMap[gapId] || '0', 10) || 0) : 0;
+      mergePersistId = mergeCandidate.node && mergeCandidate.node.dataset ? mergeCandidate.node.dataset.printPersistId || '' : '';
+      focusNodeBefore = findRenderedBreakNode(mergeCandidate) || focusNodeBefore;
+    } else {
+      var splitCandidate = findCandidateById(splitCandidateId);
+      mergePersistId = splitCandidate && splitCandidate.node && splitCandidate.node.dataset ? splitCandidate.node.dataset.printPersistId || '' : '';
+    }
+
+    var beforeLayout = snapshotRenderedLayout();
+    pushHistorySnapshot('merge-page');
+    var actionMeta = buildRuntimeActionMeta(focusNodeBefore, {
+      intent: mergeIntent,
+      effect: {
+        layout_before: beforeLayout,
+        split_candidate_id: splitCandidateId,
+        merge_candidate_id: mergeCandidate ? mergeCandidate.id : '',
+        page_label: pageMeta.primaryLabel,
+        page_role: pageMeta.role,
+        page_signature: pageMeta.signature,
+        previous_page_number: previousPage.getAttribute('data-page-number') || '',
+        current_page_number: pageNode.getAttribute('data-page-number') || '',
+        cleared_gap_units: currentGapUnits,
+        cleared_space_mode: currentSpaceMode
+      }
+    });
+
+    if (mergeCandidate) {
+      mergeCandidate.node.dataset.printBreakMode = 'auto';
+      delete breakOverrideMap[mergeCandidate.id];
+      if (currentSpaceMode !== 'auto') {
+        mergeCandidate.node.dataset.printSpaceMode = 'auto';
+        delete spaceOverrideMap[mergeCandidate.id];
+      }
+      if (gapId) {
+        delete manualGapMap[gapId];
+      }
+      pullUpOverrideMap[mergeCandidate.id] = true;
+      writeStoredBreakOverrides();
+      writeStoredSpaceOverrides();
+      writeStoredPullUpOverrides();
+      writeStoredGaps();
+      applyResolvedBreakModes();
+      applyStoredManualGaps();
+    } else {
+      clearManualPageSplitPersistence(splitCandidateId);
+    }
+
+    while (currentContent.firstChild) {
+      previousContent.appendChild(currentContent.firstChild);
+    }
+    pageNode.remove();
+
+    removeEmptyRenderedPages();
+    renumberRenderedPages();
+    expandRenderedPageFrame(previousPage);
+    installDirectPageManipulation();
+    persistRenderedLayout();
+    refreshNavigatorOptions();
+
+    var focusNodeAfter = splitCandidateId ? findRenderedCandidateNode(splitCandidateId) : (previousContent.lastElementChild || previousPage);
+    focusManualPageSplitTarget(focusNodeAfter || previousPage);
+    refreshEditorList();
+    var afterLayout = snapshotRenderedLayout();
+    logLearningAction('merge_page', {
+      targetNode: focusNodeAfter || previousPage,
+      candidateId: mergeCandidate ? mergeCandidate.id : splitCandidateId,
+      persistId: mergePersistId,
+      before: {
+        break_mode: currentMode,
+        space_mode: currentSpaceMode,
+        gap_units: currentGapUnits,
+        page_number: actionMeta.page_before && actionMeta.page_before.page_number ? actionMeta.page_before.page_number : 0
+      },
+      after: {
+        page_number: pageNumberFromNode(closestRenderedPageNode(focusNodeAfter || previousPage)),
+        page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+      },
+      ui: {
+        source: 'page_merge_button',
+        suggestion_source: 'manual'
+      },
+      meta: Object.assign({}, actionMeta, {
+        focus_after: currentSelectedTarget(),
+        target_after: captureRenderedNodePosition(focusNodeAfter || previousPage),
+        page_after: captureRenderedPageSnapshot(closestRenderedPageNode(focusNodeAfter || previousPage)),
+        effect: {
+          merge_live_page: true,
+          merge_manual_page: !mergeCandidate,
+          merge_candidate_id: mergeCandidate ? mergeCandidate.id : '',
+          split_candidate_id: splitCandidateId,
+          layout_effect: diffRenderedLayouts(beforeLayout, afterLayout)
+        }
+      })
+    });
+    updateEditorBannerStatus('현재 페이지를 앞 페이지에 붙였습니다');
+    return true;
+  }
+
+  function splitRenderedPageAtNode(renderedCandidate, options) {
+    var config = options || {};
     if (!renderedCandidate) {
       updateEditorBannerStatus('나눌 블록을 찾지 못했습니다');
       return;
     }
+    var pageNode = closestRenderedPageNode(renderedCandidate);
+    var contentRoot = renderedContentRoot(pageNode);
     var candidateId = renderedCandidate.getAttribute('data-print-break-id') || '';
     var candidate = findCandidateById(candidateId);
-    if (!candidate) {
+    if (!candidate || !pageNode || !contentRoot || !contentRoot.contains(renderedCandidate)) {
       updateEditorBannerStatus('나눌 기준 블록을 찾지 못했습니다');
       return;
     }
-    setCandidateModeWithReload(candidate, 'force', '여기서 새 페이지 시작으로 적용 중…', 'inline_split_button', 'split_page');
+    if (!hasMeaningfulPrefixBeforeNode(contentRoot, renderedCandidate)) {
+      updateEditorBannerStatus('이미 이 페이지의 시작입니다');
+      return;
+    }
+
+    pushRenderedHistorySnapshot();
+    var beforeLayout = snapshotRenderedLayout();
+    var actionMeta = buildRuntimeActionMeta(renderedCandidate, {
+      intent: 'split_page_live',
+      effect: {
+        layout_before: beforeLayout
+      }
+    });
+    var newPage = cloneRenderedPageShell(pageNode);
+    if (!newPage || !pageNode.parentNode) {
+      updateEditorBannerStatus('새 페이지를 만들지 못했습니다');
+      return;
+    }
+    newPage.dataset.printManualPage = 'true';
+    newPage.dataset.printManualSplitCandidate = candidate.id;
+    pageNode.parentNode.insertBefore(newPage, pageNode.nextSibling);
+    var newContentRoot = renderedContentRoot(newPage);
+    var moved = splitRenderedTailIntoContainer(contentRoot, renderedCandidate, newContentRoot);
+    if (!moved || !newContentRoot || !Array.from(newContentRoot.childNodes || []).some(function (child) {
+      return (child.nodeType === 1 && hasMeaningfulRenderedContent(child)) || (child.nodeType === 3 && normalizePrintText(child.textContent || ''));
+    })) {
+      newPage.remove();
+      updateEditorBannerStatus('이 위치에서 페이지를 나누지 못했습니다');
+      return;
+    }
+
+    syncManualPageSplitPersistence(candidate);
+    removeEmptyRenderedPages();
+    renumberRenderedPages();
+    expandRenderedPageFrame(pageNode);
+    expandRenderedPageFrame(newPage);
+    installDirectPageManipulation();
+    persistRenderedLayout();
+    refreshNavigatorOptions();
+    focusManualPageSplitTarget(renderedCandidate);
+    refreshEditorList();
+
+    var afterLayout = snapshotRenderedLayout();
+    logLearningAction('split_page', {
+      targetNode: renderedCandidate,
+      candidateId: candidate.id,
+      before: {
+        page_number: actionMeta.page_before && actionMeta.page_before.page_number ? actionMeta.page_before.page_number : 0
+      },
+      after: {
+        page_number: pageNumberFromNode(closestRenderedPageNode(renderedCandidate)),
+        page_count: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length
+      },
+      ui: {
+        source: config.uiSource || 'inline_split_button',
+        suggestion_source: suggestionSourceForBreak(candidate, 'force')
+      },
+      meta: Object.assign({}, actionMeta, {
+        focus_after: currentSelectedTarget(),
+        target_after: captureRenderedNodePosition(renderedCandidate),
+        page_after: captureRenderedPageSnapshot(closestRenderedPageNode(renderedCandidate)),
+        effect: {
+          split_page_live: true,
+          created_page_number: pageNumberFromNode(closestRenderedPageNode(renderedCandidate)),
+          layout_effect: diffRenderedLayouts(beforeLayout, afterLayout)
+        }
+      })
+    });
+    updateEditorBannerStatus('이 블록부터 아래 내용을 다음 페이지로 보냈습니다');
+  }
+
+  function splitRenderedPageAtNodeForRestore(renderedCandidate) {
+    if (!renderedCandidate) return false;
+    var pageNode = closestRenderedPageNode(renderedCandidate);
+    var contentRoot = renderedContentRoot(pageNode);
+    var candidateId = renderedCandidate.getAttribute('data-print-break-id') || '';
+    var candidate = findCandidateById(candidateId);
+    if (!candidate || !pageNode || !contentRoot || !contentRoot.contains(renderedCandidate)) {
+      return false;
+    }
+    if (!hasMeaningfulPrefixBeforeNode(contentRoot, renderedCandidate)) {
+      return false;
+    }
+
+    var newPage = cloneRenderedPageShell(pageNode);
+    if (!newPage || !pageNode.parentNode) {
+      return false;
+    }
+    newPage.dataset.printManualPage = 'true';
+    newPage.dataset.printManualSplitCandidate = candidate.id;
+    pageNode.parentNode.insertBefore(newPage, pageNode.nextSibling);
+    var newContentRoot = renderedContentRoot(newPage);
+    var moved = splitRenderedTailIntoContainer(contentRoot, renderedCandidate, newContentRoot);
+    if (!moved || !newContentRoot || !Array.from(newContentRoot.childNodes || []).some(function (child) {
+      return (child.nodeType === 1 && hasMeaningfulRenderedContent(child)) || (child.nodeType === 3 && normalizePrintText(child.textContent || ''));
+    })) {
+      newPage.remove();
+      return false;
+    }
+
+    syncManualPageSplitPersistence(candidate);
+    removeEmptyRenderedPages();
+    renumberRenderedPages();
+    expandRenderedPageFrame(pageNode);
+    expandRenderedPageFrame(newPage);
+    return true;
   }
 
   function undoLastEdit() {
@@ -3117,28 +5044,24 @@
 
   function mergeWithPreviousPage(pageNode) {
     if (!pageNode) return;
-    var previousPage = pageNode.previousElementSibling;
-    if (!previousPage) {
-      updateEditorBannerStatus('앞 페이지가 없습니다');
-      return;
-    }
-    var pageMeta = describeRenderedPage(pageNode);
-    if (!pageMeta.canMerge) {
-      updateEditorBannerStatus(pageMeta.mergeHelpText);
-      return;
-    }
-    var candidate = mergeCandidateForPage(pageNode);
-    if (!candidate) {
-      updateEditorBannerStatus(pageMeta.mergeHelpText);
-      return;
-    }
+    mergeRenderedPageLive(pageNode);
+  }
+
+  function pullCandidateUpWithReload(candidate, options) {
+    if (!candidate || !candidate.node) return;
+    var config = options || {};
     var currentMode = sanitizeBreakMode(candidate.node.dataset.printBreakMode || breakOverrideMap[candidate.id] || 'auto');
     var currentSpaceMode = sanitizeSpaceMode(candidate.node.dataset.printSpaceMode || spaceOverrideMap[candidate.id] || 'auto');
-    var gapId = candidate && candidate.node && candidate.node.dataset ? (candidate.node.dataset.printBreakId || candidate.node.dataset.printPersistId || '') : '';
+    var gapId = candidate.node.dataset ? (candidate.node.dataset.printBreakId || candidate.node.dataset.printPersistId || '') : '';
     var currentGapUnits = gapId ? (parseInt(manualGapMap[gapId] || '0', 10) || 0) : 0;
     var renderedNode = findRenderedBreakNode(candidate) || candidate.node;
-    var beforeLayout = snapshotRenderedLayout();
-    pushHistorySnapshot('merge-page');
+
+    if (currentMode === 'auto' && candidatePullUpEnabled(candidate) && currentSpaceMode === 'auto' && currentGapUnits === 0) {
+      updateEditorBannerStatus(config.alreadyStatus || '이미 앞 내용과 이어지도록 설정되어 있습니다');
+      return;
+    }
+
+    pushHistorySnapshot(config.historyLabel || 'pull-up');
     var eventId = logLearningAction('set_break_mode', {
       targetNode: renderedNode,
       candidateId: candidate.id,
@@ -3154,24 +5077,20 @@
         gap_units: 0
       },
       ui: {
-        source: 'page_merge_button',
+        source: config.uiSource || 'manual_pull_up',
         suggestion_source: 'manual'
       },
       meta: buildRuntimeActionMeta(renderedNode, {
-        intent: 'merge_with_previous_page',
-        effect: {
-          merge_with_previous_page: true,
-          page_label: pageMeta.primaryLabel,
-          page_role: pageMeta.role,
-          page_signature: pageMeta.signature,
+        intent: config.intent || 'pull_up_block',
+        effect: Object.assign({
+          pull_up_block: true,
           cleared_gap_units: currentGapUnits,
           cleared_space_mode: currentSpaceMode,
-          previous_page_number: previousPage.getAttribute('data-page-number') || '',
-          current_page_number: pageNode.getAttribute('data-page-number') || '',
-          layout_before: beforeLayout
-        }
+          layout_before: snapshotRenderedLayout()
+        }, config.effect || {})
       })
     });
+
     candidate.node.dataset.printBreakMode = 'auto';
     delete breakOverrideMap[candidate.id];
     if (currentSpaceMode !== 'auto') {
@@ -3182,6 +5101,7 @@
       delete manualGapMap[gapId];
     }
     pullUpOverrideMap[candidate.id] = true;
+
     writeStoredBreakOverrides();
     writeStoredSpaceOverrides();
     writeStoredPullUpOverrides();
@@ -3190,12 +5110,12 @@
     applyStoredManualGaps();
     refreshEditorList();
     flushLearningEvents(true);
-    updateEditorBannerStatus('앞 페이지와 더 자연스럽게 이어 붙이는 중…');
+    updateEditorBannerStatus(config.status || '앞 내용과 이어 붙이는 중…');
     reloadWithPreservedFocus({
       targetNode: renderedNode,
       candidateId: candidate.id,
-      persistId: candidate.node && candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '',
-      intent: 'merge_with_previous_page',
+      persistId: candidate.node.dataset ? candidate.node.dataset.printPersistId || '' : '',
+      intent: config.intent || 'pull_up_block',
       actionEventId: eventId
     });
   }
@@ -3220,7 +5140,7 @@
     var previousPageRange = firstLastCandidateIdsInPage(previousPage);
     var nextPageRange = firstLastCandidateIdsInPage(nextPage);
     var candidateIds = pageMeta.candidateIds.slice();
-    var persistIds = pageMeta.persistIds.slice();
+    var persistIds = (pageMeta.deletablePersistIds || []).slice();
     if (!persistIds.length && !candidateIds.length) {
       updateEditorBannerStatus('페이지를 없앨 수 없습니다');
       return;
@@ -3258,6 +5178,7 @@
           page_role: pageMeta.role,
           page_signature: pageMeta.signature,
           shared_persist_ids: pageMeta.sharedWithPrevious.concat(pageMeta.sharedWithNext),
+          deleted_persist_ids: persistIds,
           fallback_candidate_id: fallbackCandidateId,
           fallback_persist_id: fallbackPersistId,
           layout_before: snapshotRenderedLayout()
@@ -3272,7 +5193,7 @@
     clearStateForDeletedPersistIds(persistIds);
     clearRenderedOrderStorage();
     flushLearningEvents(true);
-    updateEditorBannerStatus('페이지와 해당 내용을 삭제하는 중…');
+    updateEditorBannerStatus('페이지의 고유 내용을 삭제하는 중…');
     reloadWithPreservedFocus({
       targetNode: fallbackNode,
       candidateId: fallbackCandidateId,
@@ -3344,6 +5265,10 @@
 
     var main = document.createElement('div');
     main.className = 'print-page-chrome-main';
+    var summaryBits = [];
+    if (pageMeta.primaryLabel) summaryBits.push(pageMeta.primaryLabel);
+    if (pageMeta.detailText) summaryBits.push(pageMeta.detailText);
+    var summaryText = summaryBits.join(' · ');
 
     var kicker = document.createElement('div');
     kicker.className = 'print-page-chrome-kicker';
@@ -3351,6 +5276,7 @@
     var pageChip = document.createElement('span');
     pageChip.className = 'print-page-chip is-strong';
     pageChip.textContent = (pageMeta.pageNumber || '?') + '페이지';
+    if (summaryText) pageChip.title = summaryText;
     kicker.appendChild(pageChip);
 
     pageMeta.continuationBadges.forEach(function (label) {
@@ -3369,16 +5295,7 @@
     }
 
     main.appendChild(kicker);
-
-    var title = document.createElement('div');
-    title.className = 'print-page-chrome-title';
-    title.textContent = pageMeta.primaryLabel || '페이지';
-    main.appendChild(title);
-
-    var metaLine = document.createElement('div');
-    metaLine.className = 'print-page-chrome-meta';
-    metaLine.textContent = pageMeta.detailText || '블록 0개';
-    main.appendChild(metaLine);
+    if (summaryText) main.title = summaryText;
 
     chrome.appendChild(main);
 
@@ -3391,6 +5308,7 @@
   function installDirectPageManipulation() {
     var pagesRoot = document.querySelector('.pagedjs_pages');
     if (!pagesRoot) return false;
+    normalizeRenderedStructuralFragments(pagesRoot);
     var insertedHandles = 0;
 
     Array.from(pagesRoot.querySelectorAll('.pagedjs_page[data-page-number]')).forEach(function (pageNode, index) {
@@ -3447,10 +5365,26 @@
         insertBar.className = 'print-insert-actions';
         insertBar.dataset.targetBreakId = candidateId;
 
+        var mergeButton = document.createElement('button');
+        mergeButton.type = 'button';
+        mergeButton.className = 'print-insert-action-button';
+        mergeButton.textContent = '앞에 붙이기';
+        mergeButton.title = '이 블록을 바로 앞 내용과 이어 붙이기';
+        mergeButton.addEventListener('click', function () {
+          var targetCandidate = findCandidateById(candidateId);
+          if (!targetCandidate) return;
+          pullCandidateUpWithReload(targetCandidate, {
+            status: '앞 내용과 이어 붙이는 중…',
+            uiSource: 'inline_pull_up_button',
+            intent: 'pull_up_block'
+          });
+        });
+        insertBar.appendChild(mergeButton);
+
         var splitButton = document.createElement('button');
         splitButton.type = 'button';
         splitButton.className = 'print-insert-action-button';
-        splitButton.textContent = '페이지 나누기';
+        splitButton.textContent = '여기서 시작';
         splitButton.title = '이 블록부터 새 페이지 시작';
         if (recommendation && recommendation.break && recommendation.break.mode === 'force') {
           splitButton.classList.add('is-suggested');
@@ -3464,7 +5398,7 @@
         var gapButton = document.createElement('button');
         gapButton.type = 'button';
         gapButton.className = 'print-insert-action-button';
-        gapButton.textContent = '빈공간 삽입';
+        gapButton.textContent = '빈칸 +';
         gapButton.title = '엔터 한 번 정도의 빈공간 추가';
         if (recommendation && recommendation.gap && recommendation.gap.units > 0) {
           gapButton.classList.add('is-suggested');
@@ -3541,6 +5475,9 @@
       var imageLabelText = document.createElement('span');
       imageLabelText.textContent = '이미지 크기';
       imageLabel.appendChild(imageLabelText);
+      var selectionCountBadge = document.createElement('span');
+      selectionCountBadge.className = 'print-image-selection-count';
+      imageLabel.appendChild(selectionCountBadge);
       if (imageRecommendation && imageRecommendation.targetScalePct < 100) {
         var imageBadge = document.createElement('span');
         imageBadge.className = 'print-inline-suggestion-badge';
@@ -3550,13 +5487,18 @@
       }
       imageTools.appendChild(imageLabel);
 
+      var infoRow = document.createElement('div');
+      infoRow.className = 'print-image-width-live';
+      infoRow.textContent = figureWidthInfoText(figure);
+      imageTools.appendChild(infoRow);
+
       var sliderRow = document.createElement('div');
       sliderRow.className = 'print-image-tools-row';
 
       var scaleRange = document.createElement('input');
       scaleRange.type = 'range';
       scaleRange.className = 'print-image-scale-range';
-      scaleRange.min = '60';
+      scaleRange.min = String(minimumImageScalePct);
       scaleRange.max = '100';
       scaleRange.step = '1';
       scaleRange.value = String(currentStoredImageScale(figureId));
@@ -3574,6 +5516,69 @@
       sliderRow.appendChild(scaleValue);
 
       imageTools.appendChild(sliderRow);
+
+      var widthRow = document.createElement('div');
+      widthRow.className = 'print-image-tools-row print-image-width-row';
+
+      var widthInput = document.createElement('input');
+      widthInput.type = 'number';
+      widthInput.className = 'print-image-width-input';
+      widthInput.min = String(minimumFigureWidthPx(figure));
+      widthInput.step = '1';
+      widthInput.inputMode = 'numeric';
+      widthInput.value = String(Math.max(1, figureRenderedWidthPx(figure) || 1));
+      widthInput.title = '선택한 이미지에 적용할 목표 너비(px)';
+      widthRow.appendChild(widthInput);
+
+      var widthUnit = document.createElement('span');
+      widthUnit.className = 'print-image-width-unit';
+      widthUnit.textContent = 'px';
+      widthRow.appendChild(widthUnit);
+
+      var widthApplyButton = document.createElement('button');
+      widthApplyButton.type = 'button';
+      widthApplyButton.className = 'print-image-tool-button';
+      widthApplyButton.textContent = '폭 적용';
+      widthApplyButton.title = '현재 입력한 px 값을 선택한 이미지들에 적용';
+      widthApplyButton.addEventListener('click', function () {
+        var nextWidth = parseFloat(widthInput.value || '0');
+        if (!(nextWidth > 0)) {
+          updateEditorBannerStatus('적용할 이미지 너비(px)를 입력하세요');
+          return;
+        }
+        applyFigureWidthToSelection(figureId, nextWidth, 'image_width_input');
+      });
+      widthRow.appendChild(widthApplyButton);
+
+      widthInput.addEventListener('keydown', function (event) {
+        if (!event || event.key !== 'Enter') return;
+        widthApplyButton.click();
+      });
+
+      imageTools.appendChild(widthRow);
+
+      var selectionRow = document.createElement('div');
+      selectionRow.className = 'print-image-tools-row print-image-tools-actions';
+
+      var selectionButton = document.createElement('button');
+      selectionButton.type = 'button';
+      selectionButton.className = 'print-image-tool-button print-image-selection-button';
+      selectionButton.addEventListener('click', function () {
+        var enabled = toggleImageSelectionId(figureId);
+        updateEditorBannerStatus(enabled ? '이미지를 너비 통일 선택에 추가했습니다' : '이미지를 너비 통일 선택에서 제외했습니다');
+      });
+      selectionRow.appendChild(selectionButton);
+
+      var unifyButton = document.createElement('button');
+      unifyButton.type = 'button';
+      unifyButton.className = 'print-image-tool-button print-image-unify-button';
+      unifyButton.textContent = '현재 기준 통일';
+      unifyButton.addEventListener('click', function () {
+        unifySelectedImagesToFigure(figureId);
+      });
+      selectionRow.appendChild(unifyButton);
+
+      imageTools.appendChild(selectionRow);
 
       var actionRow = document.createElement('div');
       actionRow.className = 'print-image-tools-row print-image-tools-actions';
@@ -3619,6 +5624,24 @@
 
       imageTools.appendChild(actionRow);
 
+      var resizeHandle = directChildByClass(figure, 'print-image-resize-handle');
+      if (!resizeHandle) {
+        resizeHandle = document.createElement('button');
+        resizeHandle.type = 'button';
+        resizeHandle.className = 'print-image-resize-handle';
+        resizeHandle.title = '드래그해서 이미지 너비 조절';
+        resizeHandle.setAttribute('aria-label', '드래그해서 이미지 너비 조절');
+        resizeHandle.textContent = '↘';
+        figure.appendChild(resizeHandle);
+      }
+
+      if (!resizeHandle.dataset.printResizeBound) {
+        resizeHandle.dataset.printResizeBound = 'true';
+        resizeHandle.addEventListener('pointerdown', function (event) {
+          beginImageResizeDrag(event, figure);
+        });
+      }
+
       scaleRange.addEventListener('pointerdown', function () {
         openImageToolPanel(figure);
         scaleRange.dataset.printScaleStart = String(currentStoredImageScale(figureId));
@@ -3660,10 +5683,17 @@
         figure.dataset.printImageToolsBound = 'true';
 
         figure.addEventListener('click', function (event) {
+          if (event.target && event.target.closest('.print-image-resize-handle')) {
+            event.stopPropagation();
+            return;
+          }
           if (event.target && event.target.closest('.print-image-tools')) {
             openImageToolPanel(figure);
             event.stopPropagation();
             return;
+          }
+          if (event && (event.ctrlKey || event.metaKey)) {
+            toggleImageSelectionId(figureId);
           }
           setSelectedPersistedNode(figure, 'image', { silent: true });
           var anchor = event.target && event.target.closest('a');
@@ -3676,6 +5706,8 @@
       }
 
       updateFigureScaleUi(figure, currentStoredImageScale(figureId));
+      updateFigureSelectionUi(figure);
+      updateFigureWidthUi(figure);
     });
 
     if (!document.body.dataset.printImageToolsGlobalBound) {
@@ -3687,6 +5719,15 @@
       document.addEventListener('keydown', function (event) {
         if (!event || event.key !== 'Escape') return;
         closeImageToolPanels();
+      });
+      document.addEventListener('pointermove', function (event) {
+        updateImageResizeDrag(event);
+      });
+      document.addEventListener('pointerup', function () {
+        stopImageResizeDrag(true);
+      });
+      document.addEventListener('pointercancel', function () {
+        stopImageResizeDrag(false);
       });
     }
 
@@ -3702,7 +5743,7 @@
     syncSelectedRenderedState();
 
     var ready = insertedHandles > 0 || !!pagesRoot.querySelector('.print-insert-actions');
-    updateEditorBannerStatus(ready ? '페이지 나누기/빈공간/합치기 준비됨' : '페이지 미리보기 준비 중');
+    updateEditorBannerStatus(ready ? '블록을 클릭해서 앞에 붙이기 또는 여기서 시작으로 바로 조정하세요' : '페이지 미리보기 준비 중');
     return ready;
   }
 
@@ -3721,11 +5762,12 @@
   }
 
   function scheduleDirectManipulationInstall() {
-    clearRenderedOrderStorage();
+    restoreStoredRenderedLayoutOnce();
     installDirectPageManipulation();
     watchDirectManipulation();
     [200, 700, 1500, 3200].forEach(function (delay) {
       setTimeout(function () {
+        restoreStoredRenderedLayoutOnce();
         installDirectPageManipulation();
         refreshNavigatorOptions();
       }, delay);
@@ -3740,6 +5782,7 @@
       '.print-break-anchor{display:block;width:100%;height:0;margin:0;padding:0;border:0;}',
       '.print-page-start{break-before:page;page-break-before:always;}',
       '.print-block-page-start{break-before:page;page-break-before:always;}',
+      '.print-force-break-after{break-after:page;page-break-after:always;}',
       'body.print-ready .print-space-tight{margin-top:0.12rem!important;}',
       'body.print-ready .print-space-wide{margin-top:1rem!important;}',
       'body.print-ready .print-has-manual-gap{margin-top:var(--print-manual-gap, 0.9em)!important;}',
@@ -3768,6 +5811,7 @@
       '.print-break-anchor{display:block;width:100%;height:0;margin:0;padding:0;border:0;}',
       '.print-page-start{break-before:page;page-break-before:always;}',
       '.print-block-page-start{break-before:page;page-break-before:always;}',
+      '.print-force-break-after{break-after:page;page-break-after:always;}',
       'body.print-ready .print-split-block{display:block;width:100%;}',
       'body.print-ready .print-space-tight{margin-top:0.12rem!important;}',
       'body.print-ready .print-space-wide{margin-top:1rem!important;}',
@@ -3785,68 +5829,69 @@
       'body.print-ready[data-print-preview-spacing="airy"] .print-section{margin:1.15rem 0 1.42rem!important;}',
       'body.print-ready[data-print-preview-spacing="airy"] .print-figure-pair, body.print-ready[data-print-preview-spacing="airy"] .print-numbered-step-pair, body.print-ready[data-print-preview-spacing="airy"] .print-shortcut-block{margin-top:0.3rem!important;margin-bottom:0.9rem!important;}',
       '@media screen {',
+      '  body.print-ready{min-height:100vh;background:var(--print-ui-canvas)!important;}',
       '  body.print-ready.print-editor-open{padding-right:396px;}',
-      '  body.print-ready .pagedjs_pages{max-width:880px;margin:0 auto;padding-bottom:80px;}',
-      '  body.print-ready .pagedjs_page{margin:0 auto 28px!important;border:2px solid rgba(37,33,29,0.14);border-radius:16px;background:#fff;box-shadow:0 18px 34px rgba(17,24,39,0.08);position:relative;overflow:visible;}',
-      '  body.print-ready .pagedjs_page::before{content:"Page " attr(data-page-number);position:absolute;top:-12px;left:18px;padding:2px 10px;border-radius:999px;background:#111827;color:#fff;font-size:0.76rem;font-weight:700;letter-spacing:0.02em;}',
+      '  body.print-ready .pagedjs_pages{max-width:880px;margin:0 auto;padding:18px 0 80px;}',
+      '  body.print-ready .pagedjs_page{margin:0 auto 28px!important;border:1px solid rgba(19,22,27,0.42);border-radius:16px;background:#fcfcfb;box-shadow:var(--print-ui-paper-shadow);position:relative;overflow:visible;}',
+      '  body.print-ready .pagedjs_page::before{display:none!important;content:none!important;}',
       '  body.print-ready .print-page-action-group{position:absolute;top:-16px;right:18px;display:flex;gap:8px;z-index:9;opacity:0;transform:translateY(-2px);transition:opacity 140ms ease,transform 140ms ease;}',
       '  body.print-ready .pagedjs_page:hover .print-page-action-group{opacity:1;transform:translateY(0);}',
-      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:5px 10px;background:#fff;color:#111827;font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 8px 16px rgba(17,24,39,0.08);}',
-      '  body.print-ready .print-page-delete-button{color:#7f1d1d;border-color:rgba(127,29,29,0.18);}',
-      '  body.print-ready .print-editor-banner{position:sticky;top:0;z-index:10000;display:flex!important;flex-wrap:wrap;align-items:center;gap:10px;margin:0 auto 14px;padding:12px 14px;max-width:980px;border-bottom:1px solid rgba(17,24,39,0.08);background:rgba(255,248,215,0.98);box-shadow:0 8px 24px rgba(17,24,39,0.08);}',
-      '  body.print-ready .print-editor-banner-button{border:1px solid rgba(17,24,39,0.12);border-radius:999px;padding:8px 12px;background:#fff;color:#111827;font:inherit;font-size:0.84rem;font-weight:800;cursor:pointer;}',
-      '  body.print-ready .print-editor-banner-button.is-primary{background:#111827;color:#fff;}',
+      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:5px 10px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 10px 18px rgba(4,6,10,0.22);}',
+      '  body.print-ready .print-page-delete-button{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
+      '  body.print-ready .print-editor-banner{position:sticky;top:0;z-index:10000;display:flex!important;flex-wrap:wrap;align-items:center;gap:10px;margin:0 auto 14px;padding:12px 14px;max-width:980px;border:1px solid var(--print-editor-border);border-radius:18px;background:var(--print-ui-surface-strong);box-shadow:var(--print-ui-shadow);}',
+      '  body.print-ready .print-editor-banner-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:8px 12px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.84rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-banner-button.is-primary{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
       '  body.print-ready .print-editor-banner-button:disabled{cursor:default;opacity:0.5;}',
       '  body.print-ready .print-editor-banner-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
-      '  body.print-ready .print-editor-banner-status{margin-left:auto;font-size:0.82rem;font-weight:700;color:#5f4c1c;}',
+      '  body.print-ready .print-editor-banner-status{margin-left:auto;font-size:0.82rem;font-weight:700;color:var(--print-ui-muted);}',
       '  body.print-ready .print-editor-banner{display:flex!important;}',
-      '  body.print-ready .print-editor-launcher{position:fixed;right:18px;bottom:18px;z-index:9999;display:block!important;border:none;border-radius:999px;padding:12px 16px;background:#111827;color:#fff;font:inherit;font-weight:700;box-shadow:0 12px 30px rgba(17,24,39,0.22);cursor:pointer;}',
-      '  body.print-ready .print-editor-panel{position:fixed;top:16px;right:16px;bottom:16px;width:360px;display:none!important;flex-direction:column;gap:14px;padding:16px;border:1px solid rgba(39,41,46,0.12);border-radius:18px;background:rgba(255,255,255,0.96);backdrop-filter:blur(10px);box-shadow:0 24px 60px rgba(17,24,39,0.16);z-index:9998;}',
+      '  body.print-ready .print-editor-launcher{position:fixed;right:18px;bottom:18px;z-index:9999;display:block!important;border:1px solid var(--print-editor-border);border-radius:999px;padding:12px 16px;background:var(--print-ui-surface-strong);color:var(--print-ui-text);font:inherit;font-weight:700;box-shadow:var(--print-ui-shadow);cursor:pointer;}',
+      '  body.print-ready .print-editor-panel{position:fixed;top:16px;right:16px;bottom:16px;width:360px;display:none!important;flex-direction:column;gap:14px;padding:16px;border:1px solid var(--print-editor-border);border-radius:18px;background:var(--print-ui-surface);backdrop-filter:blur(12px);box-shadow:var(--print-ui-shadow);z-index:9998;}',
       '  body.print-ready .print-editor-panel{display:none!important;}',
       '  body.print-ready.print-editor-open .print-editor-panel{display:flex!important;}',
       '  body.print-ready .print-editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}',
-      '  body.print-ready .print-editor-title{font-size:1rem;font-weight:800;line-height:1.35;margin:0;}',
-      '  body.print-ready .print-editor-subtitle{margin:4px 0 0;font-size:0.86rem;line-height:1.45;color:#4b5563;}',
-      '  body.print-ready .print-editor-close{border:1px solid rgba(39,41,46,0.12);background:#fff;border-radius:10px;padding:6px 10px;font:inherit;cursor:pointer;}',
+      '  body.print-ready .print-editor-title{font-size:1rem;font-weight:800;line-height:1.35;margin:0;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-subtitle{margin:4px 0 0;font-size:0.86rem;line-height:1.45;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-close{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:6px 10px;font:inherit;cursor:pointer;}',
       '  body.print-ready .print-editor-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}',
-      '  body.print-ready .print-editor-summary-chip{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid rgba(148,163,184,0.18);border-radius:14px;background:#f8fafc;}',
-      '  body.print-ready .print-editor-summary-chip strong{font-size:1rem;line-height:1.1;color:#111827;}',
-      '  body.print-ready .print-editor-summary-chip span{font-size:0.72rem;font-weight:700;color:#64748b;}',
+      '  body.print-ready .print-editor-summary-chip{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.06);}',
+      '  body.print-ready .print-editor-summary-chip strong{font-size:1rem;line-height:1.1;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-summary-chip span{font-size:0.72rem;font-weight:700;color:var(--print-ui-subtle);}',
       '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip{padding:6px 10px;gap:1px;}',
       '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip strong{font-size:0.82rem;}',
       '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip span{font-size:0.64rem;}',
       '  body.print-ready .print-editor-filter-bar{display:flex;flex-wrap:wrap;gap:6px;}',
-      '  body.print-ready .print-editor-filter-button{border:1px solid rgba(39,41,46,0.12);border-radius:999px;padding:7px 11px;background:#fff;color:#111827;font:inherit;font-size:0.78rem;font-weight:800;cursor:pointer;}',
-      '  body.print-ready .print-editor-filter-button.is-active{background:#111827;border-color:#111827;color:#fff;}',
+      '  body.print-ready .print-editor-filter-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:7px 11px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.78rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-filter-button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
       '  body.print-ready .print-editor-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}',
-      '  body.print-ready .print-editor-actions button{border:1px solid rgba(39,41,46,0.12);background:#fff;border-radius:10px;padding:9px 10px;font:inherit;font-weight:700;cursor:pointer;}',
-      '  body.print-ready .print-editor-actions button.print-editor-primary{background:#2f6fed;border-color:#2f6fed;color:#fff;}',
-      '  body.print-ready .print-editor-actions button.is-active{background:#111827;border-color:#111827;color:#fff;}',
-      '  body.print-ready .print-editor-note{margin:0;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(148,163,184,0.18);font-size:0.84rem;line-height:1.5;color:#475569;}',
-      '  body.print-ready .print-editor-navigator{display:grid;grid-template-columns:1fr auto;gap:8px 10px;padding:10px 12px;border:1px solid rgba(148,163,184,0.18);border-radius:14px;background:#fff;}',
-      '  body.print-ready .print-editor-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px;border:1px solid rgba(148,163,184,0.18);border-radius:14px;background:#fff;}',
+      '  body.print-ready .print-editor-actions button{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:9px 10px;font:inherit;font-weight:700;cursor:pointer;}',
+      '  body.print-ready .print-editor-actions button.print-editor-primary{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
+      '  body.print-ready .print-editor-actions button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
+      '  body.print-ready .print-editor-note{margin:0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid var(--print-editor-border);font-size:0.84rem;line-height:1.5;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-navigator{display:grid;grid-template-columns:1fr auto;gap:8px 10px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.04);}',
+      '  body.print-ready .print-editor-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.04);}',
       '  body.print-ready .print-editor-field{display:flex;flex-direction:column;gap:6px;}',
-      '  body.print-ready .print-editor-field-label{font-size:0.78rem;font-weight:700;color:#475569;}',
-      '  body.print-ready .print-editor-select{appearance:none;border:1px solid rgba(39,41,46,0.12);border-radius:10px;padding:9px 10px;background:#fff;font:inherit;font-size:0.85rem;color:#111827;}',
-      '  body.print-ready .print-editor-secondary{align-self:end;border:1px solid rgba(39,41,46,0.12);background:#fff;border-radius:10px;padding:9px 12px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap;}',
-      '  body.print-ready .print-editor-list-meta{margin:0;font-size:0.78rem;font-weight:700;color:#64748b;}',
+      '  body.print-ready .print-editor-field-label{font-size:0.78rem;font-weight:700;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-select{appearance:none;border:1px solid var(--print-editor-border);border-radius:10px;padding:9px 10px;background:var(--print-ui-surface-soft);font:inherit;font-size:0.85rem;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-secondary{align-self:end;border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:9px 12px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap;}',
+      '  body.print-ready .print-editor-list-meta{margin:0;font-size:0.78rem;font-weight:700;color:var(--print-ui-subtle);}',
       '  body.print-ready .print-editor-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;}',
-      '  body.print-ready .print-editor-empty{padding:14px;border:1px dashed rgba(148,163,184,0.38);border-radius:14px;background:#f8fafc;font-size:0.84rem;line-height:1.55;color:#64748b;}',
-      '  body.print-ready .print-editor-item{border:1px solid rgba(39,41,46,0.12);border-radius:14px;padding:12px;background:#fff;}',
-      '  body.print-ready .print-editor-item.is-selected{border-color:rgba(37,99,235,0.34);box-shadow:0 0 0 2px rgba(37,99,235,0.12);}',
-      '  body.print-ready .print-editor-item.print-mode-force{border-color:rgba(47,111,237,0.4);background:rgba(47,111,237,0.05);}',
-      '  body.print-ready .print-editor-item.print-mode-keep{border-color:rgba(148,163,184,0.38);background:rgba(248,250,252,0.92);}',
-      '  body.print-ready .print-editor-item.is-recommended{box-shadow:0 0 0 2px rgba(191,219,254,0.7);}',
+      '  body.print-ready .print-editor-empty{padding:14px;border:1px dashed rgba(255,255,255,0.18);border-radius:14px;background:rgba(255,255,255,0.04);font-size:0.84rem;line-height:1.55;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-item{border:1px solid var(--print-editor-border);border-radius:14px;padding:12px;background:rgba(255,255,255,0.05);}',
+      '  body.print-ready .print-editor-item.is-selected{border-color:rgba(154,179,223,0.52);box-shadow:0 0 0 2px rgba(154,179,223,0.18);}',
+      '  body.print-ready .print-editor-item.print-mode-force{border-color:rgba(154,179,223,0.5);background:rgba(154,179,223,0.12);}',
+      '  body.print-ready .print-editor-item.print-mode-keep{border-color:rgba(255,255,255,0.14);background:rgba(255,255,255,0.03);}',
+      '  body.print-ready .print-editor-item.is-recommended{box-shadow:0 0 0 2px rgba(154,179,223,0.26);}',
       '  body.print-ready .print-editor-item.is-manual{border-color:rgba(245,158,11,0.28);}',
       '  body.print-ready .print-editor-item-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;}',
-      '  body.print-ready .print-editor-item-label{margin:0;font-size:0.92rem;font-weight:700;line-height:1.4;color:#111827;}',
-      '  body.print-ready .print-editor-item-meta{margin:0;font-size:0.78rem;color:#6b7280;line-height:1.45;}',
-      '  body.print-ready .print-editor-suggestion-badge, body.print-ready .print-inline-suggestion-badge{display:inline-flex!important;align-items:center;justify-content:center;width:max-content;margin-top:6px;padding:3px 8px;border-radius:999px;background:rgba(47,111,237,0.12);color:#1d4ed8;font-size:0.7rem;font-weight:800;letter-spacing:0.01em;}',
-      '  body.print-ready .print-editor-item-jump{border:none;background:transparent;color:#2f6fed;font:inherit;font-weight:700;cursor:pointer;padding:0;white-space:nowrap;}',
+      '  body.print-ready .print-editor-item-label{margin:0;font-size:0.92rem;font-weight:700;line-height:1.4;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-item-meta{margin:0;font-size:0.78rem;color:var(--print-ui-subtle);line-height:1.45;}',
+      '  body.print-ready .print-editor-suggestion-badge, body.print-ready .print-inline-suggestion-badge{display:inline-flex!important;align-items:center;justify-content:center;width:max-content;margin-top:6px;padding:3px 8px;border-radius:999px;background:rgba(154,179,223,0.18);color:#d9e5fb;font-size:0.7rem;font-weight:800;letter-spacing:0.01em;}',
+      '  body.print-ready .print-editor-item-jump{border:none;background:transparent;color:var(--print-editor-accent);font:inherit;font-weight:700;cursor:pointer;padding:0;white-space:nowrap;}',
       '  body.print-ready .print-editor-item-controls{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}',
-      '  body.print-ready .print-editor-item-controls button{border:1px solid rgba(39,41,46,0.12);background:#fff;border-radius:10px;padding:8px 6px;font:inherit;font-size:0.8rem;font-weight:700;cursor:pointer;}',
-      '  body.print-ready .print-editor-item-controls button.is-active{background:#111827;border-color:#111827;color:#fff;}',
-      '  body.print-ready .print-editor-item-controls button.is-suggested, body.print-ready .print-insert-action-button.is-suggested, body.print-ready .print-image-tool-button.is-suggested{border-color:rgba(29,78,216,0.4);background:rgba(219,234,254,0.88);color:#1d4ed8;}',
+      '  body.print-ready .print-editor-item-controls button{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:8px 6px;font:inherit;font-size:0.8rem;font-weight:700;cursor:pointer;}',
+      '  body.print-ready .print-editor-item-controls button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
+      '  body.print-ready .print-editor-item-controls button.is-suggested, body.print-ready .print-insert-action-button.is-suggested, body.print-ready .print-image-tool-button.is-suggested{border-color:rgba(154,179,223,0.4);background:rgba(154,179,223,0.18);color:#d9e5fb;}',
       '  body.print-ready .print-draggable-candidate{position:relative;overflow:visible;}',
       '  body.print-ready figure.image[data-print-persist-id]{position:relative;overflow:visible;display:flex;flex-direction:column;align-items:center;text-align:center;}',
       '  body.print-ready figure.image[data-print-persist-id] > a, body.print-ready figure.image[data-print-persist-id] > img{display:block;}',
@@ -3854,9 +5899,9 @@
       '  body.print-ready figure.image.print-image-resized img{width:calc(100% * var(--print-image-scale, 1))!important;max-width:calc(100% * var(--print-image-scale, 1))!important;}',
       '  body.print-ready .print-insert-actions{position:absolute;left:9%;right:9%;top:0;height:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:visible;pointer-events:auto;z-index:9;}',
       '  body.print-ready .print-insert-actions::before{content:"";position:absolute;left:0;right:0;top:0;transform:translateY(-50%);height:2px;border-radius:999px;background:rgba(47,111,237,0.18);transition:background 120ms ease,opacity 120ms ease;opacity:0.85;}',
-      '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(47,111,237,0.12);outline-offset:4px;border-radius:10px;}',
+      '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(154,179,223,0.18);outline-offset:4px;border-radius:10px;}',
       '  body.print-ready .print-draggable-candidate:hover > .print-insert-actions::before, body.print-ready .print-insert-actions:hover::before{background:rgba(47,111,237,0.42);opacity:1;}',
-      '  body.print-ready .print-insert-action-button{position:relative;margin-top:-14px;border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:5px 10px;background:#fff;color:#111827;font:inherit;font-size:0.73rem;font-weight:800;cursor:pointer;box-shadow:0 8px 16px rgba(17,24,39,0.08);pointer-events:auto;opacity:0;transform:translateY(-4px);transition:opacity 120ms ease,transform 120ms ease,box-shadow 120ms ease;background-clip:padding-box;}',
+      '  body.print-ready .print-insert-action-button{position:relative;margin-top:-14px;border:1px solid var(--print-editor-border);border-radius:999px;padding:5px 10px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.73rem;font-weight:800;cursor:pointer;box-shadow:0 12px 20px rgba(4,6,10,0.24);pointer-events:auto;opacity:0;transform:translateY(-4px);transition:opacity 120ms ease,transform 120ms ease,box-shadow 120ms ease;background-clip:padding-box;}',
       '  body.print-ready .print-draggable-candidate:hover > .print-insert-actions .print-insert-action-button, body.print-ready .print-insert-actions:hover .print-insert-action-button{opacity:1;transform:translateY(-14px);box-shadow:0 10px 18px rgba(17,24,39,0.12);}',
       '  body.print-ready .print-page-dropzone{position:absolute;left:18px;right:18px;display:flex!important;align-items:center;justify-content:center;min-height:0;height:0;margin:0;border:none;background:transparent;color:transparent;font-size:0;line-height:0;text-align:center;transition:height 150ms ease,min-height 150ms ease,background 150ms ease,transform 150ms ease,opacity 150ms ease;z-index:7;pointer-events:auto;opacity:0;overflow:visible;}',
       '  body.print-ready .print-page-dropzone::before{content:"";display:block;width:100%;height:2px;border-radius:999px;background:rgba(47,111,237,0.22);transition:height 150ms ease,background 150ms ease,opacity 150ms ease,transform 150ms ease;opacity:0;transform:scaleX(0.96);}',
@@ -3873,28 +5918,38 @@
       '  body.print-ready.print-drag-active .print-inline-dropzone::before{opacity:0.48;}',
       '  body.print-ready .print-inline-dropzone.is-over{min-height:36px;height:36px;margin:6px 0 10px;}',
       '  body.print-ready .print-draggable-candidate{position:relative;}',
-      '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(47,111,237,0.18);outline-offset:6px;border-radius:10px;}',
-      '  body.print-ready .print-selected-target{outline:2px solid rgba(37,99,235,0.34)!important;outline-offset:6px;border-radius:12px;box-shadow:0 0 0 4px rgba(37,99,235,0.08)!important;}',
+      '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(154,179,223,0.24);outline-offset:6px;border-radius:10px;}',
+      '  body.print-ready .print-selected-target{outline:2px solid rgba(154,179,223,0.44)!important;outline-offset:6px;border-radius:12px;box-shadow:0 0 0 4px rgba(154,179,223,0.10)!important;}',
       '  body.print-ready .print-draggable-candidate.is-dragging{opacity:0.72;}',
       '  body.print-ready .print-inline-tools{position:absolute;top:-8px;right:-8px;display:flex;gap:4px;z-index:8;opacity:0;transform:translateY(-4px);pointer-events:none;transition:opacity 120ms ease,transform 120ms ease;}',
       '  body.print-ready .print-draggable-candidate:hover > .print-inline-tools, body.print-ready .print-draggable-candidate.print-selected-target > .print-inline-tools, body.print-ready figure.image.print-selected-target > .print-inline-tools{opacity:1;transform:translateY(0);pointer-events:auto;}',
-      '  body.print-ready .print-inline-tool{display:inline-flex!important;align-items:center;justify-content:center;min-width:24px;height:24px;border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:0 6px;background:rgba(255,255,255,0.96);color:#111827;font:inherit;font-size:0.72rem;font-weight:800;cursor:pointer;box-shadow:0 6px 12px rgba(17,24,39,0.08);}',
-      '  body.print-ready .print-inline-tool.is-danger{color:#7f1d1d;border-color:rgba(127,29,29,0.2);}',
-      '  body.print-ready .print-image-tools{position:absolute;top:50%;left:50%;display:flex;flex-direction:column;gap:8px;width:min(280px, calc(100vw - 40px));max-width:calc(100vw - 40px);padding:10px 12px;border:1px solid rgba(17,24,39,0.14);border-radius:14px;background:rgba(255,255,255,0.98);color:#111827;box-shadow:0 12px 26px rgba(17,24,39,0.16);z-index:8;opacity:0;transform:translate(-50%,-50%) scale(0.96);transition:opacity 140ms ease,transform 140ms ease;pointer-events:none;}',
-      '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-tools, body.print-ready figure.image[data-print-persist-id]:focus-within .print-image-tools, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-tools{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto;}',
-      '  body.print-ready .print-image-tools-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.72rem;font-weight:800;letter-spacing:0.01em;color:#475569;}',
+      '  body.print-ready .print-inline-tool{display:inline-flex!important;align-items:center;justify-content:center;min-width:24px;height:24px;border:1px solid var(--print-editor-border);border-radius:999px;padding:0 6px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.72rem;font-weight:800;cursor:pointer;box-shadow:0 8px 14px rgba(4,6,10,0.22);}',
+      '  body.print-ready .print-inline-tool.is-danger{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
+      '  body.print-ready figure.image.print-image-group-selected{outline:2px solid rgba(154,179,223,0.52);outline-offset:8px;border-radius:14px;}',
+      '  body.print-ready .print-image-tools{position:absolute;top:12px;left:50%;display:flex;flex-direction:column;gap:8px;width:min(320px, calc(100vw - 40px));max-width:calc(100vw - 40px);padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:var(--print-ui-surface);color:var(--print-ui-text);box-shadow:var(--print-ui-shadow);z-index:8;opacity:0;transform:translate(-50%,-6px) scale(0.96);transform-origin:center top;transition:opacity 140ms ease,transform 140ms ease;pointer-events:none;}',
+      '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-tools, body.print-ready figure.image[data-print-persist-id]:focus-within .print-image-tools, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-tools{opacity:1;transform:translate(-50%,0) scale(1);pointer-events:auto;}',
+      '  body.print-ready .print-image-tools-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.72rem;font-weight:800;letter-spacing:0.01em;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-image-selection-count{display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.08);color:var(--print-ui-text);font-size:0.68rem;font-weight:800;}',
+      '  body.print-ready .print-image-width-live{font-size:0.72rem;line-height:1.45;color:var(--print-ui-muted);}',
       '  body.print-ready .print-image-tools-row{display:flex;align-items:center;gap:10px;}',
       '  body.print-ready .print-image-tools-actions{justify-content:flex-end;flex-wrap:wrap;}',
       '  body.print-ready .print-image-scale-range{flex:1;accent-color:#2f6fed;cursor:pointer;}',
-      '  body.print-ready .print-image-scale-value{min-width:46px;text-align:right;font-size:0.78rem;font-weight:800;color:#111827;}',
-      '  body.print-ready .print-image-tool-button{display:inline-flex!important;align-items:center;justify-content:center;min-width:44px;height:28px;border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:0 10px;background:rgba(255,255,255,0.98);color:#111827;font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 6px 12px rgba(17,24,39,0.08);}',
-      '  body.print-ready .print-image-tool-button.is-danger{color:#7f1d1d;border-color:rgba(127,29,29,0.2);}',
+      '  body.print-ready .print-image-scale-value{min-width:46px;text-align:right;font-size:0.78rem;font-weight:800;color:var(--print-ui-text);}',
+      '  body.print-ready .print-image-width-row{align-items:center;}',
+      '  body.print-ready .print-image-width-input{width:92px;border:1px solid var(--print-editor-border);border-radius:10px;padding:7px 9px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.8rem;font-weight:700;}',
+      '  body.print-ready .print-image-width-unit{font-size:0.76rem;font-weight:800;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-image-tool-button{display:inline-flex!important;align-items:center;justify-content:center;min-width:44px;height:28px;border:1px solid var(--print-editor-border);border-radius:999px;padding:0 10px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 8px 14px rgba(4,6,10,0.22);}',
+      '  body.print-ready .print-image-tool-button.is-danger{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
+      '  body.print-ready .print-image-tool-button:disabled{opacity:0.45;cursor:default;}',
+      '  body.print-ready .print-image-resize-handle{position:absolute;right:-10px;bottom:-10px;display:inline-flex!important;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--print-editor-border);border-radius:999px;background:var(--print-ui-surface-strong);color:var(--print-ui-text);font:inherit;font-size:0.88rem;font-weight:800;cursor:nwse-resize;box-shadow:0 10px 16px rgba(4,6,10,0.24);z-index:8;opacity:0;transform:scale(0.96);transition:opacity 120ms ease,transform 120ms ease;}',
+      '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-resize-handle, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-resize-handle, body.print-ready figure.image.print-selected-target .print-image-resize-handle{opacity:1;transform:scale(1);}',
+      '  body.print-ready.print-image-resizing .print-image-resize-handle{opacity:1;}',
       '  body.print-ready .print-drag-handle{cursor:grab!important;}',
       '  body.print-ready.print-drag-active .print-drag-handle{cursor:grabbing!important;}',
       '  body.print-ready.print-text-edit-mode [data-print-edit-id]{outline:2px dashed rgba(47,111,237,0.22);outline-offset:3px;border-radius:4px;min-height:1em;}',
       '  body.print-ready .print-has-manual-gap{margin-top:var(--print-manual-gap, 0.9em)!important;}',
-      '  body.print-ready .print-page-target-highlight{box-shadow:0 0 0 4px rgba(59,130,246,0.18), 0 18px 34px rgba(17,24,39,0.08)!important;}',
-      '  body.print-ready .print-editor-target-highlight{box-shadow:0 0 0 3px rgba(59,130,246,0.18)!important;}',
+      '  body.print-ready .print-page-target-highlight{box-shadow:0 0 0 4px rgba(154,179,223,0.16), 0 18px 34px rgba(4,6,10,0.22)!important;}',
+      '  body.print-ready .print-editor-target-highlight{box-shadow:0 0 0 3px rgba(154,179,223,0.22)!important;}',
       '  @media (max-width: 1280px){body.print-ready.print-editor-open{padding-right:0;}body.print-ready .print-editor-panel{width:min(400px, calc(100vw - 28px));}}',
       '  @media (max-width: 900px){body.print-ready .print-editor-banner{padding:10px 12px;}body.print-ready .print-editor-panel{top:auto;left:12px;right:12px;bottom:12px;width:auto;max-height:78vh;border-radius:18px;}body.print-ready .print-editor-settings{grid-template-columns:1fr;}body.print-ready .print-editor-summary{grid-template-columns:repeat(2,minmax(0,1fr));}}',
       '}',
@@ -3904,10 +5959,12 @@
       '  body.print-ready .print-editor-panel,',
       '  body.print-ready .print-page-dropzone,',
       '  body.print-ready .print-drag-handle,',
+      '  body.print-ready .print-image-resize-handle,',
       '  body.print-ready .print-page-action-group,',
       '  body.print-ready .print-page-merge-button,',
       '  body.print-ready .print-page-delete-button,',
       '  body.print-ready .print-image-tools,',
+      '  body.print-ready .print-inline-tools,',
       '  body.print-ready .print-insert-actions{display:none!important;}',
       '}'
     ].join('');
@@ -3921,25 +5978,25 @@
     style.textContent = [
       '@media screen {',
       '  body.print-ready .pagedjs_pages{padding-top:18px;}',
-      '  body.print-ready .pagedjs_page{margin:0 auto 34px!important;border:1px solid rgba(37,33,29,0.18);border-radius:18px;background:linear-gradient(180deg, rgba(250,248,244,0.9) 0, rgba(255,255,255,0) 52px), #fff;box-shadow:0 20px 38px rgba(17,24,39,0.10);}',
+      '  body.print-ready .pagedjs_page{margin:0 auto 34px!important;border:1px solid rgba(19,22,27,0.42);border-radius:18px;background:linear-gradient(180deg, rgba(255,255,255,0.96) 0, rgba(252,252,251,1) 100%);box-shadow:var(--print-ui-paper-shadow);}',
       '  body.print-ready .pagedjs_page::before{content:none!important;}',
       '  body.print-ready .pagedjs_page.print-page-continued-top{border-top-color:rgba(47,111,237,0.38);}',
       '  body.print-ready .pagedjs_page.print-page-continued-bottom{border-bottom-color:rgba(47,111,237,0.38);}',
-      '  body.print-ready .pagedjs_page.print-selected-target{box-shadow:0 0 0 3px rgba(37,99,235,0.12), 0 22px 42px rgba(17,24,39,0.12)!important;}',
+      '  body.print-ready .pagedjs_page.print-selected-target{box-shadow:0 0 0 3px rgba(154,179,223,0.18), var(--print-ui-paper-shadow)!important;}',
       '  body.print-ready .print-page-chrome{position:absolute;left:16px;right:16px;top:-18px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;z-index:10;pointer-events:none;}',
-      '  body.print-ready .print-page-chrome-main{display:flex;flex-direction:column;gap:4px;min-width:0;padding:10px 14px 11px;border:1px solid rgba(17,24,39,0.12);border-radius:16px;background:rgba(255,255,255,0.98);box-shadow:0 12px 24px rgba(17,24,39,0.10);pointer-events:auto;}',
+      '  body.print-ready .print-page-chrome-main{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 10px;border:1px solid var(--print-editor-border);border-radius:999px;background:var(--print-ui-surface-strong);box-shadow:0 14px 24px rgba(4,6,10,0.24);pointer-events:auto;}',
       '  body.print-ready .print-page-chrome-kicker{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
-      '  body.print-ready .print-page-chip{display:inline-flex;align-items:center;justify-content:center;padding:3px 9px;border-radius:999px;border:1px solid rgba(17,24,39,0.12);background:rgba(248,250,252,0.98);color:#334155;font-size:0.68rem;font-weight:800;line-height:1.1;letter-spacing:0.01em;}',
-      '  body.print-ready .print-page-chip.is-strong{background:#111827;color:#fff;border-color:#111827;}',
-      '  body.print-ready .print-page-chip.is-flow{background:rgba(47,111,237,0.08);border-color:rgba(47,111,237,0.18);color:#1d4ed8;}',
-      '  body.print-ready .print-page-chip.is-warning{background:rgba(127,29,29,0.08);border-color:rgba(127,29,29,0.18);color:#7f1d1d;}',
-      '  body.print-ready .print-page-chrome-title{max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.92rem;font-weight:800;line-height:1.35;color:#111827;}',
-      '  body.print-ready .print-page-chrome-meta{max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;font-weight:700;line-height:1.35;color:#64748b;}',
+      '  body.print-ready .print-page-chip{display:inline-flex;align-items:center;justify-content:center;padding:3px 9px;border-radius:999px;border:1px solid var(--print-editor-border);background:rgba(255,255,255,0.06);color:var(--print-ui-muted);font-size:0.68rem;font-weight:800;line-height:1.1;letter-spacing:0.01em;}',
+      '  body.print-ready .print-page-chip.is-strong{background:var(--print-editor-accent);color:#182230;border-color:var(--print-editor-accent);}',
+      '  body.print-ready .print-page-chip.is-flow{background:rgba(154,179,223,0.16);border-color:rgba(154,179,223,0.28);color:#d9e5fb;}',
+      '  body.print-ready .print-page-chip.is-warning{background:var(--print-ui-danger-soft);border-color:rgba(240,177,173,0.28);color:var(--print-ui-danger);}',
+      '  body.print-ready .print-page-chrome-title{max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.92rem;font-weight:800;line-height:1.35;color:var(--print-ui-text);}',
+      '  body.print-ready .print-page-chrome-meta{max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;font-weight:700;line-height:1.35;color:var(--print-ui-subtle);}',
       '  body.print-ready .print-page-action-group{position:static;display:flex;gap:8px;align-items:center;opacity:1!important;transform:none!important;pointer-events:auto;}',
-      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid rgba(17,24,39,0.14);border-radius:999px;padding:8px 12px;background:rgba(255,255,255,0.98);color:#111827;font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 10px 20px rgba(17,24,39,0.08);}',
-      '  body.print-ready .print-page-delete-button{color:#7f1d1d;border-color:rgba(127,29,29,0.18);}',
-      '  body.print-ready .print-page-action-group button:disabled{cursor:not-allowed;opacity:0.52;box-shadow:none;background:rgba(248,250,252,0.96);color:#64748b;border-color:rgba(148,163,184,0.22);}',
-      '  body.print-ready .pagedjs_page.print-selected-target .print-page-chrome-main{box-shadow:0 0 0 3px rgba(37,99,235,0.12), 0 12px 24px rgba(17,24,39,0.10);}',
+      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:8px 12px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 12px 20px rgba(4,6,10,0.22);}',
+      '  body.print-ready .print-page-delete-button{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
+      '  body.print-ready .print-page-action-group button:disabled{cursor:not-allowed;opacity:0.52;box-shadow:none;background:rgba(255,255,255,0.05);color:var(--print-ui-subtle);border-color:rgba(255,255,255,0.08);}',
+      '  body.print-ready .pagedjs_page.print-selected-target .print-page-chrome-main{box-shadow:0 0 0 3px rgba(154,179,223,0.14), 0 14px 24px rgba(4,6,10,0.22);}',
       '  @media (max-width: 900px){body.print-ready .print-page-chrome{left:10px;right:10px;top:-14px;flex-direction:column;align-items:stretch;}body.print-ready .print-page-chrome-title, body.print-ready .print-page-chrome-meta{max-width:none;}body.print-ready .print-page-action-group{justify-content:flex-end;}}',
       '}',
       '@media print {',
@@ -3953,7 +6010,7 @@
     if (!document.body || document.body.dataset.printEditorShortcutsBound) return;
     document.body.dataset.printEditorShortcutsBound = 'true';
     document.addEventListener('keydown', function (event) {
-      if (!event || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!event) return;
       var target = event.target;
       if (target && (
         target.isContentEditable ||
@@ -3962,19 +6019,36 @@
         return;
       }
 
-      if (event.key === 'e' || event.key === 'E') {
+      var key = String(event.key || '');
+      var normalizedKey = key.toLowerCase();
+
+      if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && normalizedKey === 'z') {
+        event.preventDefault();
+        undoLastEdit();
+        return;
+      }
+
+      if (!event.altKey && !event.ctrlKey && !event.metaKey && event.shiftKey && key === 'Delete') {
+        event.preventDefault();
+        resetAllEdits({ uiSource: 'keyboard_reset_all' });
+        return;
+      }
+
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+      if (normalizedKey === 'e') {
         event.preventDefault();
         toggleEditorPanel();
         return;
       }
 
-      if (event.key === 'r' || event.key === 'R') {
+      if (!event.shiftKey && normalizedKey === 'r') {
         event.preventDefault();
         jumpToRecommendedItem();
         return;
       }
 
-      if (event.key === 'Delete') {
+      if (!event.shiftKey && key === 'Delete') {
         if (deleteSelectedTarget('keyboard_delete')) {
           event.preventDefault();
         }
@@ -4011,6 +6085,7 @@
     refreshNavigatorOptions();
     scheduleDirectManipulationInstall();
     scheduleReloadFocusRestore();
+    scheduleAutoOptimizeResume();
     return true;
   }
 
@@ -4116,22 +6191,51 @@
       var controls = document.createElement('div');
       controls.className = 'print-editor-item-controls';
       [
-        { label: '해제', value: 'auto' },
-        { label: '여기서 시작', value: 'force' }
+        {
+          label: '기본 흐름',
+          active: mode === 'auto' && !candidatePullUpEnabled(candidate),
+          suggested: false,
+          reason: '',
+          action: function () {
+            setCandidateModeWithReload(candidate, 'auto', '페이지 시작 지정 해제 중…', 'editor_panel', 'break_toggle');
+          }
+        },
+        {
+          label: '앞에 붙이기',
+          active: candidatePullUpEnabled(candidate),
+          suggested: false,
+          reason: '이 블록을 앞 내용과 이어 붙입니다',
+          action: function () {
+            pullCandidateUpWithReload(candidate, {
+              status: '앞 내용과 이어 붙이는 중…',
+              uiSource: 'editor_panel_pull_up',
+              intent: 'pull_up_block'
+            });
+          }
+        },
+        {
+          label: '여기서 시작',
+          active: mode === 'force',
+          suggested: !!(recommendation && recommendation.break && recommendation.break.mode === 'force'),
+          reason: recommendation && recommendation.break ? (joinRecommendationReasons(recommendation.break) || recommendation.break.label) : '',
+          action: function () {
+            splitRenderedPageAtNode(findRenderedBreakNode(candidate) || candidate.node, { uiSource: 'editor_panel' });
+          }
+        }
       ].forEach(function (option) {
         var button = document.createElement('button');
         button.type = 'button';
         button.textContent = option.label;
-        if (mode === option.value) {
+        if (option.active) {
           button.classList.add('is-active');
         }
-        if (recommendation && recommendation.break && recommendation.break.mode === option.value && option.value === 'force') {
+        if (option.suggested) {
           button.classList.add('is-suggested');
-          button.title = joinRecommendationReasons(recommendation.break) || recommendation.break.label;
         }
-        button.addEventListener('click', function () {
-          setCandidateModeWithReload(candidate, option.value, option.value === 'force' ? '이 위치에서 시작하도록 조정 중…' : '페이지 시작 지정 해제 중…', 'editor_panel', 'break_toggle');
-        });
+        if (option.reason) {
+          button.title = option.reason;
+        }
+        button.addEventListener('click', option.action);
         controls.appendChild(button);
       });
       item.appendChild(controls);
@@ -4323,8 +6427,167 @@
     }
     writeStoredImageScales();
     applyStoredImageScales();
-    refreshEditorList();
-    updateEditorBannerStatus(nextLevel > 0 ? '이미지 크기를 조정했습니다' : '이미지 크기를 기본값으로 복원했습니다');
+    updateEditorUiSummary();
+    scheduleFigureToolStateRefresh([figure]);
+    updateEditorBannerStatus(nextLevel < 100 ? '이미지 크기를 조정했습니다' : '이미지 크기를 기본값으로 복원했습니다');
+  }
+
+  function setFigureScalesBatch(updates, uiSource, statusMessage) {
+    var normalizedUpdates = uniqueTruthyStrings((updates || []).map(function (entry) {
+      return entry && entry.figureId ? String(entry.figureId) : '';
+    })).map(function (figureId) {
+      var match = (updates || []).find(function (entry) {
+        return entry && String(entry.figureId || '') === figureId;
+      }) || null;
+      if (!match) return null;
+      return {
+        figureId: figureId,
+        level: sanitizeImageScale(match.level)
+      };
+    }).filter(Boolean).filter(function (entry) {
+      return currentStoredImageScale(entry.figureId) !== entry.level;
+    });
+
+    if (!normalizedUpdates.length) {
+      updateEditorBannerStatus('선택한 이미지의 너비가 이미 맞춰져 있습니다');
+      return;
+    }
+
+    pushRenderedHistorySnapshot();
+    pushHistorySnapshot('image-scale-batch');
+    var primaryFigure = persistedNodeById(normalizedUpdates[0].figureId);
+    logLearningAction('set_image_scale_batch', {
+      targetNode: primaryFigure,
+      persistId: normalizedUpdates[0].figureId,
+      nodeKind: 'image',
+      before: {
+        image_count: normalizedUpdates.length
+      },
+      after: {
+        image_count: normalizedUpdates.length,
+        scale_updates: normalizedUpdates.map(function (entry) {
+          return {
+            persist_id: entry.figureId,
+            scale_pct: entry.level
+          };
+        })
+      },
+      ui: {
+        source: uiSource || 'image_batch',
+        suggestion_source: 'manual'
+      },
+      meta: buildRuntimeActionMeta(primaryFigure, {
+        effect: {
+          image_scale_batch: true,
+          image_count: normalizedUpdates.length
+        }
+      })
+    });
+
+    normalizedUpdates.forEach(function (entry) {
+      if (entry.level >= 100) {
+        delete imageScaleMap[entry.figureId];
+      } else {
+        imageScaleMap[entry.figureId] = entry.level;
+      }
+    });
+
+    writeStoredImageScales();
+    applyStoredImageScales();
+    updateEditorUiSummary();
+    scheduleFigureToolStateRefresh(normalizedUpdates.map(function (entry) {
+      return persistedNodeById(entry.figureId);
+    }).filter(Boolean));
+    updateEditorBannerStatus(statusMessage || ('선택한 이미지 ' + normalizedUpdates.length + '개의 너비를 맞췄습니다'));
+  }
+
+  function applyFigureWidthToSelection(figureId, targetWidthPx, uiSource) {
+    var targetIds = imageSelectionTargetIds(figureId);
+    if (!targetIds.length) {
+      updateEditorBannerStatus('너비를 맞출 이미지를 먼저 선택하세요');
+      return;
+    }
+    var updates = targetIds.map(function (targetId) {
+      var figure = persistedNodeById(targetId);
+      if (!figure) return null;
+      return {
+        figureId: targetId,
+        level: targetScaleForFigureWidthPx(figure, targetWidthPx)
+      };
+    }).filter(Boolean);
+
+    if (!updates.length) {
+      updateEditorBannerStatus('선택한 이미지 너비를 계산하지 못했습니다');
+      return;
+    }
+
+    setFigureScalesBatch(updates, uiSource || 'image_width_input', targetIds.length > 1 ? ('선택한 이미지 ' + targetIds.length + '개의 너비를 ' + Math.round(targetWidthPx) + 'px 기준으로 맞췄습니다') : '이미지 너비를 적용했습니다');
+  }
+
+  function unifySelectedImagesToFigure(figureId) {
+    var figure = persistedNodeById(figureId);
+    if (!figure) {
+      updateEditorBannerStatus('기준 이미지를 찾지 못했습니다');
+      return;
+    }
+    var targetIds = imageSelectionTargetIds(figureId);
+    if (targetIds.length < 2) {
+      updateEditorBannerStatus('먼저 너비를 맞출 이미지를 두 개 이상 선택하세요');
+      return;
+    }
+    var renderedWidth = figureRenderedWidthPx(figure);
+    if (!(renderedWidth > 0)) {
+      updateEditorBannerStatus('기준 이미지 너비를 계산하지 못했습니다');
+      return;
+    }
+    applyFigureWidthToSelection(figureId, renderedWidth, 'image_unify_from_current');
+  }
+
+  function stopImageResizeDrag(commit) {
+    if (!imageResizeDragState) return;
+    var state = imageResizeDragState;
+    imageResizeDragState = null;
+    document.body.classList.remove('print-image-resizing');
+    if (!commit) {
+      applyFigureScalePreview(state.figureId, state.startLevel);
+      return;
+    }
+    if (state.previewLevel === state.startLevel) {
+      applyFigureScalePreview(state.figureId, state.startLevel);
+      return;
+    }
+    setFigureScale(state.figureId, state.previewLevel, 'image_drag');
+  }
+
+  function beginImageResizeDrag(event, figure) {
+    if (!event || !figure || !figure.dataset) return;
+    var figureId = figure.dataset.printPersistId || '';
+    if (!figureId) return;
+    var renderedWidth = figureRenderedWidthPx(figure);
+    if (!(renderedWidth > 0)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openImageToolPanel(figure);
+    setSelectedPersistedNode(figure, 'image', { silent: true });
+    imageResizeDragState = {
+      figureId: figureId,
+      startLevel: currentStoredImageScale(figureId),
+      previewLevel: currentStoredImageScale(figureId),
+      startWidthPx: renderedWidth,
+      pointerStartX: event.clientX
+    };
+    document.body.classList.add('print-image-resizing');
+  }
+
+  function updateImageResizeDrag(event) {
+    if (!imageResizeDragState || !event) return;
+    var figure = persistedNodeById(imageResizeDragState.figureId);
+    if (!figure) return;
+    var deltaX = event.clientX - imageResizeDragState.pointerStartX;
+    var nextWidth = imageResizeDragState.startWidthPx + deltaX;
+    var nextLevel = targetScaleForFigureWidthPx(figure, nextWidth);
+    imageResizeDragState.previewLevel = nextLevel;
+    applyFigureScalePreview(imageResizeDragState.figureId, nextLevel);
   }
 
   function nudgeFigureScale(figureId, delta) {
@@ -4554,14 +6817,14 @@
     editorBanner = document.createElement('div');
     editorBanner.className = 'print-editor-banner';
 
-    var bannerRefresh = document.createElement('button');
-    bannerRefresh.type = 'button';
-    bannerRefresh.className = 'print-editor-banner-button is-primary';
-    bannerRefresh.textContent = '미리보기 다시 계산';
-    bannerRefresh.addEventListener('click', function () {
-      reloadWithPreservedFocus({ intent: 'refresh_preview', actionEventId: '' });
+    var bannerAutoOptimize = document.createElement('button');
+    bannerAutoOptimize.type = 'button';
+    bannerAutoOptimize.className = 'print-editor-banner-button is-primary';
+    bannerAutoOptimize.textContent = '1. 자동 정리';
+    bannerAutoOptimize.addEventListener('click', function () {
+      startAutoOptimize('banner_auto_optimize');
     });
-    editorBanner.appendChild(bannerRefresh);
+    editorBanner.appendChild(bannerAutoOptimize);
 
     var bannerUndo = document.createElement('button');
     bannerUndo.type = 'button';
@@ -4572,11 +6835,21 @@
     });
     editorBanner.appendChild(bannerUndo);
 
+    var bannerReset = document.createElement('button');
+    bannerReset.type = 'button';
+    bannerReset.className = 'print-editor-banner-button';
+    bannerReset.textContent = '전체 초기화';
+    bannerReset.title = '지금까지의 편집 내용을 기본 상태로 초기화';
+    bannerReset.addEventListener('click', function () {
+      resetAllEdits({ uiSource: 'banner_reset_all' });
+    });
+    editorBanner.appendChild(bannerReset);
+
     editorBannerRecommendationButton = document.createElement('button');
     editorBannerRecommendationButton.type = 'button';
     editorBannerRecommendationButton.className = 'print-editor-banner-button';
     editorBannerRecommendationButton.setAttribute('data-editor-role', 'jump-recommendation');
-    editorBannerRecommendationButton.textContent = '추천으로 이동';
+    editorBannerRecommendationButton.textContent = '2. 문제 위치';
     editorBannerRecommendationButton.addEventListener('click', function () {
       jumpToRecommendedItem();
     });
@@ -4586,7 +6859,7 @@
     editorPanelToggleButton.type = 'button';
     editorPanelToggleButton.className = 'print-editor-banner-button';
     editorPanelToggleButton.setAttribute('data-editor-role', 'panel-toggle');
-    editorPanelToggleButton.textContent = '편집 패널';
+    editorPanelToggleButton.textContent = '3. 블록 조정';
     editorPanelToggleButton.addEventListener('click', function () {
       toggleEditorPanel();
     });
@@ -4607,14 +6880,14 @@
 
     var bannerStatus = document.createElement('span');
     bannerStatus.className = 'print-editor-banner-status';
-    bannerStatus.textContent = '페이지 미리보기 준비 중';
+    bannerStatus.textContent = '블록을 눌러 앞에 붙이기 또는 여기서 시작으로 직접 맞추세요';
     editorBanner.appendChild(bannerStatus);
     document.body.insertBefore(editorBanner, document.body.firstChild);
 
     editorLauncher = document.createElement('button');
     editorLauncher.type = 'button';
     editorLauncher.className = 'print-editor-launcher';
-    editorLauncher.textContent = '편집 패널 (E)';
+    editorLauncher.textContent = '블록 조정 (E)';
     editorLauncher.addEventListener('click', function () {
       toggleEditorPanel();
     });
@@ -4629,12 +6902,12 @@
     var titleWrap = document.createElement('div');
     var title = document.createElement('h2');
     title.className = 'print-editor-title';
-    title.textContent = 'Layout Assistant';
+    title.textContent = '블록 조정';
     titleWrap.appendChild(title);
 
     var subtitle = document.createElement('p');
     subtitle.className = 'print-editor-subtitle';
-    subtitle.textContent = '추천을 먼저 확인하고 필요한 블록만 수동으로 조정하세요. E: 패널 열기, R: 추천 이동, Esc: 닫기.';
+    subtitle.textContent = '자동 정리는 초안만 잡습니다. 실제 수정은 블록마다 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 맞추세요. E: 열기, R: 문제 위치, Ctrl/Cmd+Z: 되돌리기, Shift+Delete: 전체 초기화, Esc: 닫기.';
     titleWrap.appendChild(subtitle);
     header.appendChild(titleWrap);
 
@@ -4677,11 +6950,28 @@
     var focusRecommendationButton = document.createElement('button');
     focusRecommendationButton.type = 'button';
     focusRecommendationButton.className = 'print-editor-primary';
-    focusRecommendationButton.textContent = '추천으로 이동';
+    focusRecommendationButton.textContent = '문제 위치';
     focusRecommendationButton.addEventListener('click', function () {
       jumpToRecommendedItem();
     });
     actions.appendChild(focusRecommendationButton);
+
+    var applyRecommendationButton = document.createElement('button');
+    applyRecommendationButton.type = 'button';
+    applyRecommendationButton.className = 'print-editor-primary';
+    applyRecommendationButton.textContent = '자동 정리';
+    applyRecommendationButton.addEventListener('click', function () {
+      startAutoOptimize('panel_auto_optimize');
+    });
+    actions.appendChild(applyRecommendationButton);
+
+    var panelRefresh = document.createElement('button');
+    panelRefresh.type = 'button';
+    panelRefresh.textContent = '다시 계산';
+    panelRefresh.addEventListener('click', function () {
+      reloadWithPreservedFocus({ intent: 'refresh_preview', actionEventId: '' });
+    });
+    actions.appendChild(panelRefresh);
 
     editorTextEditToggle = document.createElement('button');
     editorTextEditToggle.type = 'button';
@@ -4702,13 +6992,14 @@
     });
     actions.appendChild(panelUndo);
 
-    var panelPrint = document.createElement('button');
-    panelPrint.type = 'button';
-    panelPrint.textContent = '바로 인쇄';
-    panelPrint.addEventListener('click', function () {
-      window.print();
+    var panelReset = document.createElement('button');
+    panelReset.type = 'button';
+    panelReset.textContent = '전체 초기화';
+    panelReset.addEventListener('click', function () {
+      resetAllEdits({ uiSource: 'panel_reset_all' });
     });
-    actions.appendChild(panelPrint);
+    actions.appendChild(panelReset);
+
     editorPanel.appendChild(actions);
 
     editorNote = document.createElement('p');
@@ -5000,6 +7291,9 @@
     pairNumberedStepBlocks(pageBody);
   }
 
+  splitMultiBlockBulletItems();
+  splitIndentedFlowSegments();
+
   Array.from(document.querySelectorAll('ul.bulleted-list > li')).forEach(function (li) {
     if (isNumberedStepText(li.textContent || '')) {
       li.classList.add('print-bulletless-item');
@@ -5032,6 +7326,7 @@
   imageScaleMap = readStoredImageScales();
   applyStoredTextOverrides();
   applyStoredDeletedNodes();
+  annotateListBreakRoots();
   viewSettings = readStoredViewSettings();
   ensurePaginationStyles();
   applyViewSettings();

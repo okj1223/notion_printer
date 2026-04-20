@@ -38,6 +38,12 @@ class NotionPrinterPreviewHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length <= 0:
@@ -117,7 +123,7 @@ def parse_args() -> argparse.Namespace:
 
     serve = subparsers.add_parser("serve", help="Serve an HTML file over localhost and optionally open it.")
     serve.add_argument("html_file", type=Path, help="Generated print HTML file to preview.")
-    serve.add_argument("--port", type=int, default=0, help="Preferred port. Default: auto.")
+    serve.add_argument("--port", type=int, default=18789, help="Preferred port. Default: 18789.")
     serve.add_argument("--no-open", action="store_true", help="Do not open a browser automatically.")
 
     subparsers.add_parser("stop", help="Stop the previously started preview server.")
@@ -184,7 +190,8 @@ def serve_html(html_file: Path, preferred_port: int, no_open: bool) -> int:
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     save_state(os.getpid(), port, html_file)
 
-    url = f"http://127.0.0.1:{port}/{quote(html_file.name)}"
+    version_token = str(html_file.stat().st_mtime_ns)
+    url = f"http://127.0.0.1:{port}/{quote(html_file.name)}?np_open={version_token}"
     print(f"Notion Printer preview: {url}")
     if not no_open:
         open_browser(url)

@@ -299,10 +299,11 @@ STATUS_CODE="$(cat "$STATUS_FILE" 2>/dev/null || echo 1)"
 rm -f "$STATUS_FILE"
 
 if [[ "$STATUS_CODE" != "0" ]]; then
-  zenity --error \
+  zenity --text-info \
     --title="Notion Printer 실패" \
-    --width=720 \
-    --text="생성 중 오류가 발생했습니다.\n\n$(sed 's/&/&amp;/g' "$LOG_FILE")"
+    --width=900 \
+    --height=720 \
+    --filename="$LOG_FILE"
   rm -f "$LOG_FILE"
   exit 1
 fi

@@ -26,6 +26,7 @@ from notion_printer_learning import (
 )
 
 Image.MAX_IMAGE_PIXELS = None
+RESAMPLE_LANCZOS = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.ANTIALIAS)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -54,6 +55,8 @@ RUNTIME_MARKER_START = "<!-- notion-print-export:runtime -->"
 RUNTIME_MARKER_END = "<!-- /notion-print-export:runtime -->"
 PAGED_MARKER_START = "<!-- notion-print-export:paged -->"
 PAGED_MARKER_END = "<!-- /notion-print-export:paged -->"
+PAGED_CONFIG_MARKER_START = "<!-- notion-print-export:paged-config -->"
+PAGED_CONFIG_MARKER_END = "<!-- /notion-print-export:paged-config -->"
 
 TITLE_SUFFIX_RE = re.compile(r"\s+\(Print(?: Compact)?(?: Fast)?\)$")
 BODY_RE = re.compile(r"<body(?P<attrs>[^>]*)>", re.IGNORECASE)
@@ -649,6 +652,11 @@ def sanitize_node_children(parent: HtmlNode) -> None:
 
         sanitize_node_children(child)
 
+        if child.tag == "img":
+            set_attr(child, "loading", "eager")
+            set_attr(child, "decoding", "sync")
+            set_attr(child, "fetchpriority", "high")
+
         if has_class(child, "page-header-icon"):
             continue
         if child.tag in {"mark", "code"} and not has_meaningful_content(child.children):
@@ -956,6 +964,110 @@ def inject_runtime(html: str, runtime_js: str) -> str:
     return html + block
 
 
+def build_paged_config_js() -> str:
+    return """
+(function () {
+  function waitForWindowLoad(timeoutMs) {
+    if (document.readyState === 'complete') return Promise.resolve();
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        window.removeEventListener('load', finish);
+        resolve();
+      }
+      window.addEventListener('load', finish, { once: true });
+      window.setTimeout(finish, timeoutMs || 15000);
+    });
+  }
+
+  function primePrintImages() {
+    return Array.from(document.images || []).map(function (img) {
+      try { img.loading = 'eager'; } catch (error) {}
+      try { img.decoding = 'sync'; } catch (error) {}
+      try { img.fetchPriority = 'high'; } catch (error) {}
+      try { img.setAttribute('loading', 'eager'); } catch (error) {}
+      try { img.setAttribute('decoding', 'sync'); } catch (error) {}
+      try { img.setAttribute('fetchpriority', 'high'); } catch (error) {}
+      return img;
+    });
+  }
+
+  function waitForOneImage(img, timeoutMs) {
+    if (!img) return Promise.resolve();
+    if (img.complete && img.naturalWidth > 0) {
+      if (typeof img.decode === 'function') {
+        return img.decode().catch(function () {});
+      }
+      return Promise.resolve();
+    }
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        img.removeEventListener('load', finish);
+        img.removeEventListener('error', finish);
+        if (img.complete && img.naturalWidth > 0 && typeof img.decode === 'function') {
+          img.decode().catch(function () {}).finally(resolve);
+          return;
+        }
+        resolve();
+      }
+      img.addEventListener('load', finish, { once: true });
+      img.addEventListener('error', finish, { once: true });
+      window.setTimeout(finish, timeoutMs || 15000);
+    });
+  }
+
+  function waitForDocumentAssets() {
+    var images = primePrintImages();
+    var waits = images.map(function (img) {
+      return waitForOneImage(img, 15000);
+    });
+    if (document.fonts && typeof document.fonts.ready === 'object') {
+      waits.push(document.fonts.ready.catch(function () {}));
+    }
+    return Promise.all(waits).then(function () {});
+  }
+
+  var existing = window.PagedConfig || {};
+  var existingBefore = typeof existing.before === 'function' ? existing.before : null;
+  var existingAfter = typeof existing.after === 'function' ? existing.after : null;
+
+  window.PagedConfig = Object.assign({}, existing, {
+    auto: existing.auto !== false,
+    before: async function () {
+      await waitForWindowLoad(15000);
+      await waitForDocumentAssets();
+      if (existingBefore) {
+        await existingBefore();
+      }
+      document.documentElement.setAttribute('data-notion-printer-assets-ready', 'true');
+    },
+    after: async function (flow) {
+      document.documentElement.setAttribute('data-notion-printer-paged-ready', 'true');
+      if (existingAfter) {
+        await existingAfter(flow);
+      }
+    }
+  });
+})();
+""".strip()
+
+
+def inject_paged_config(html: str, paged_config_js: str) -> str:
+    block = (
+        f"{PAGED_CONFIG_MARKER_START}\n"
+        f"<script>\n{paged_config_js}\n</script>\n"
+        f"{PAGED_CONFIG_MARKER_END}\n"
+    )
+    if "</body>" in html:
+        return html.replace("</body>", block + "</body>", 1)
+    return html + block
+
+
 def inject_paged_polyfill(html: str, paged_js: str) -> str:
     block = f"{PAGED_MARKER_START}\n<script>\n{paged_js}</script>\n{PAGED_MARKER_END}\n"
     if "</body>" in html:
@@ -1097,7 +1209,7 @@ def build_preview_asset(source_path: Path, preview_dir: Path, max_edge: int, qua
                     max(1, int(round(width * scale))),
                     max(1, int(round(height * scale))),
                 )
-                img = img.resize(resized, Image.Resampling.LANCZOS)
+                img = img.resize(resized, RESAMPLE_LANCZOS)
 
             img.save(target, format="WEBP", quality=quality, method=6)
             return target
@@ -1281,6 +1393,7 @@ def generate_variant(
     html = inject_recommendation(html, recommendation_js)
     html = inject_learning(html, learning_js)
     html = inject_runtime(html, runtime_js)
+    html = inject_paged_config(html, build_paged_config_js())
     html = inject_paged_polyfill(html, paged_js)
 
     output_path.write_text(html, encoding="utf-8")
