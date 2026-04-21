@@ -55,8 +55,20 @@
   var editorUiBootstrapped = false;
   var directManipulationObserver = null;
   var directManipulationRetryTimer = null;
+  var directManipulationRefreshQueuedWhileDragging = false;
   var editorBootstrapObserver = null;
   var textEditModeEnabled = false;
+  var pageSidebar = null;
+  var pageSidebarList = null;
+  var pageSidebarToggleButton = null;
+  var pageSidebarOpen = true;
+  var pageSidebarSyncScheduled = false;
+  var pageSidebarActivePageNumber = '';
+  var pageSidebarRefreshTimer = null;
+  var pageSidebarEmptyAttemptCount = 0;
+  var pagedReadyObserver = null;
+  var pageSidebarHydrationTimer = null;
+  var pageSidebarHydrationVersion = 0;
   var storageVersion = 'v8';
   var renderedDomHistory = [];
   var reloadFocusRestoreScheduled = false;
@@ -67,15 +79,19 @@
   var manifestVariantName = '';
   var manifestSourceHash = '';
   var manifestIsCompactVariant = false;
+  var manifestUiDefaultMode = 'minimal';
+  var uiMode = 'minimal';
   var selectedTargetState = { kind: '', candidateId: '', persistId: '', pageNumber: 0 };
   var selectedImageIds = [];
   var imageResizeDragState = null;
+  var imageScaleSliderDragState = null;
   var figureToolRefreshScheduled = false;
   var pendingFigureToolRefreshIds = {};
   var listBreakRootCounter = 0;
   var queuedReloadNotice = '';
   var storedRenderedLayoutApplied = false;
   var minimumImageScalePct = 5;
+  var imageScaleStepPct = 0.1;
 
   function readManifestPayload() {
     try {
@@ -104,11 +120,34 @@
     manifestVariantName = typeof manifest.variant === 'string' ? manifest.variant : '';
     manifestSourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
     manifestIsCompactVariant = !!manifest.is_compact_variant;
+    manifestUiDefaultMode = /^(full|minimal)$/.test(String(manifest.ui_default_mode || '')) ? String(manifest.ui_default_mode) : 'minimal';
     var generatedAt = typeof manifest.generated_at === 'string' ? manifest.generated_at : '';
     var outputName = typeof manifest.output_name === 'string' ? manifest.output_name : '';
     var sourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
     manifestStorageSalt = generatedAt || [outputName, sourceHash].filter(Boolean).join('::');
   })();
+
+  function resolveUiMode() {
+    try {
+      var params = new URLSearchParams(window.location.search || '');
+      var requested = String(params.get('np_ui') || '').trim();
+      if (/^(full|minimal)$/.test(requested)) {
+        return requested;
+      }
+    } catch (error) {
+      // Ignore query parsing issues and continue with manifest defaults.
+    }
+    return manifestUiDefaultMode || 'minimal';
+  }
+
+  function applyUiMode(mode) {
+    uiMode = /^(full|minimal)$/.test(String(mode || '')) ? String(mode) : 'minimal';
+    if (document.body) {
+      document.body.classList.toggle('print-ui-minimal', uiMode === 'minimal');
+      document.body.classList.toggle('print-ui-full', uiMode === 'full');
+    }
+    pruneEditorBannerForMinimalMode();
+  }
 
   function uniqueNonEmptyStrings(values) {
     var seen = {};
@@ -528,18 +567,80 @@
   }
 
   function sanitizeImageScale(level) {
-    var parsed = Math.round(parseFloat(level));
+    var parsed = parseFloat(level);
     if (isNaN(parsed)) return 100;
-    if (parsed >= 0 && parsed <= 4) {
-      if (parsed === 1) return 92;
-      if (parsed === 2) return 84;
-      if (parsed === 3) return 76;
-      if (parsed === 4) return 68;
+    var legacyValue = Math.round(parsed);
+    if (Math.abs(parsed - legacyValue) < 0.001 && legacyValue >= 0 && legacyValue <= 4) {
+      if (legacyValue === 1) return 92;
+      if (legacyValue === 2) return 84;
+      if (legacyValue === 3) return 76;
+      if (legacyValue === 4) return 68;
       return 100;
     }
     if (parsed < minimumImageScalePct) return minimumImageScalePct;
     if (parsed > 100) return 100;
-    return parsed;
+    if (parsed > 100 - (imageScaleStepPct / 2)) return 100;
+    return Math.round(parsed / imageScaleStepPct) * imageScaleStepPct;
+  }
+
+  function formatImageScaleLabel(level) {
+    var safeLevel = sanitizeImageScale(level);
+    var text = Math.abs(safeLevel - Math.round(safeLevel)) < 0.001
+      ? String(Math.round(safeLevel))
+      : safeLevel.toFixed(2).replace(/\.?0+$/, '');
+    return text + '%';
+  }
+
+  function imageSliderRatio(level) {
+    var safeLevel = sanitizeImageScale(level);
+    var span = 100 - minimumImageScalePct;
+    if (!(span > 0)) return 1;
+    var ratio = (safeLevel - minimumImageScalePct) / span;
+    if (ratio < 0) return 0;
+    if (ratio > 1) return 1;
+    return ratio;
+  }
+
+  function imageSliderValue(slider) {
+    if (!slider || !slider.dataset) return 100;
+    return sanitizeImageScale(slider.dataset.value || 100);
+  }
+
+  function imageSliderRawRatioFromPointer(slider, event) {
+    if (!slider || !event || !slider.getBoundingClientRect) return imageSliderRatio(imageSliderValue(slider));
+    var rect = slider.getBoundingClientRect();
+    if (!(rect.width > 0)) return imageSliderRatio(imageSliderValue(slider));
+    return (event.clientX - rect.left) / rect.width;
+  }
+
+  function updateImageSliderVisual(slider, level) {
+    if (!slider) return;
+    var safeLevel = sanitizeImageScale(level);
+    var ratio = imageSliderRatio(safeLevel);
+    var fill = slider.querySelector('.print-image-scale-fill');
+    var thumb = slider.querySelector('.print-image-scale-thumb');
+    slider.dataset.value = String(safeLevel);
+    slider.setAttribute('aria-valuemin', String(minimumImageScalePct));
+    slider.setAttribute('aria-valuemax', '100');
+    slider.setAttribute('aria-valuenow', String(safeLevel));
+    slider.setAttribute('aria-valuetext', formatImageScaleLabel(safeLevel));
+    if (fill) fill.style.width = (ratio * 100) + '%';
+    if (thumb) thumb.style.left = (ratio * 100) + '%';
+  }
+
+  function imageSliderValueFromPointer(slider, event) {
+    if (!slider || !event || !slider.getBoundingClientRect) return imageSliderValue(slider);
+    var rect = slider.getBoundingClientRect();
+    if (!(rect.width > 0)) return imageSliderValue(slider);
+    var ratio = (event.clientX - rect.left) / rect.width;
+    if (ratio < 0) ratio = 0;
+    if (ratio > 1) ratio = 1;
+    return sanitizeImageScale(minimumImageScalePct + ((100 - minimumImageScalePct) * ratio));
+  }
+
+  function setImageSliderDraggingState(figure, active) {
+    if (!figure || !figure.classList) return;
+    figure.classList.toggle('print-image-slider-active', !!active);
   }
 
   function readStoredImageScales() {
@@ -638,7 +739,7 @@
   }
 
   function recommendationRuntime() {
-    return window.NotionPrinterRecommendation || null;
+    return null;
   }
 
   function logLearningAction(actionType, payload) {
@@ -1811,8 +1912,46 @@
     return !!(pullUpOverrideMap[candidate.id] || candidate.node.dataset.printPullUpMode === 'pull_up');
   }
 
-  function imageScaleValue(level) {
-    return sanitizeImageScale(level) / 100;
+  function figureBaseScaleFactor(figure) {
+    var availableWidth = figureAvailableWidthPx(figure);
+    if (!(availableWidth > 0)) return 1;
+    var image = imageElementForFigure(figure);
+    if (image) {
+      var inlineWidth = image.style && typeof image.style.width === 'string' ? image.style.width.trim() : '';
+      if (inlineWidth) {
+        if (/%$/i.test(inlineWidth)) {
+          return clampNumber(parseFloat(inlineWidth) / 100, 0.01, 1);
+        }
+        var inlineWidthPx = parseFloat(inlineWidth);
+        if (inlineWidthPx > 0) {
+          return clampNumber(Math.min(inlineWidthPx, availableWidth) / availableWidth, 0.01, 1);
+        }
+      }
+      var widthAttr = parseFloat(image.getAttribute('width') || '');
+      if (widthAttr > 0) {
+        return clampNumber(Math.min(widthAttr, availableWidth) / availableWidth, 0.01, 1);
+      }
+    }
+    var cachedBaseScale = parseFloat((figure.dataset && figure.dataset.printImageBaseScale) || '');
+    if (cachedBaseScale > 0) {
+      return clampNumber(cachedBaseScale, 0.01, 1);
+    }
+    var renderedWidth = figureRenderedWidthPx(figure);
+    var fallbackScale = renderedWidth > 0 ? clampNumber(renderedWidth / availableWidth, 0.01, 1) : 1;
+    if (figure.dataset) {
+      figure.dataset.printImageBaseScale = String(fallbackScale);
+    }
+    return fallbackScale;
+  }
+
+  function maximumFigureWidthPx(figure) {
+    var availableWidth = figureAvailableWidthPx(figure);
+    if (!(availableWidth > 0)) return 1;
+    return Math.max(1, Math.round(availableWidth * figureBaseScaleFactor(figure)));
+  }
+
+  function imageScaleValue(level, figure) {
+    return figureBaseScaleFactor(figure) * (sanitizeImageScale(level) / 100);
   }
 
   function imageSelectionIds() {
@@ -1872,22 +2011,21 @@
   }
 
   function minimumFigureWidthPx(figure) {
-    var availableWidth = figureAvailableWidthPx(figure);
-    if (!(availableWidth > 0)) return 1;
-    return Math.max(1, Math.round((availableWidth * minimumImageScalePct) / 100));
+    return Math.max(1, Math.round((maximumFigureWidthPx(figure) * minimumImageScalePct) / 100));
   }
 
   function targetScaleForFigureWidthPx(figure, widthPx) {
-    var availableWidth = figureAvailableWidthPx(figure);
-    if (!(availableWidth > 0)) return 100;
-    var safeWidth = clampNumber(widthPx, minimumFigureWidthPx(figure), availableWidth);
-    return sanitizeImageScale(Math.round((safeWidth / availableWidth) * 100));
+    var maximumWidth = maximumFigureWidthPx(figure);
+    if (!(maximumWidth > 0)) return 100;
+    var safeWidth = clampNumber(widthPx, minimumFigureWidthPx(figure), maximumWidth);
+    return sanitizeImageScale((safeWidth / maximumWidth) * 100);
   }
 
   function currentFigureWidthInfo(figure) {
     return {
       renderedWidthPx: figureRenderedWidthPx(figure),
       availableWidthPx: figureAvailableWidthPx(figure),
+      maximumWidthPx: maximumFigureWidthPx(figure),
       naturalWidthPx: figureNaturalWidthPx(figure)
     };
   }
@@ -1897,7 +2035,7 @@
     var parts = [];
     if (info.renderedWidthPx > 0) parts.push('현재 ' + info.renderedWidthPx + 'px');
     if (info.availableWidthPx > 0) parts.push('최소 ' + minimumFigureWidthPx(figure) + 'px');
-    if (info.availableWidthPx > 0) parts.push('최대 ' + info.availableWidthPx + 'px');
+    if (info.maximumWidthPx > 0) parts.push('최대 ' + info.maximumWidthPx + 'px');
     if (info.naturalWidthPx > 0) parts.push('원본 ' + info.naturalWidthPx + 'px');
     return parts.length ? parts.join(' · ') : '이미지 크기 정보를 계산하는 중';
   }
@@ -1936,6 +2074,10 @@
     if (infoNode) infoNode.textContent = infoText;
 
     var widthInput = figure.querySelector('.print-image-width-input');
+    if (widthInput) {
+      widthInput.min = String(minimumFigureWidthPx(figure));
+      widthInput.max = String(maximumFigureWidthPx(figure));
+    }
     if (widthInput && document.activeElement !== widthInput) {
       var currentWidth = figureRenderedWidthPx(figure);
       if (currentWidth > 0) widthInput.value = String(currentWidth);
@@ -1999,8 +2141,8 @@
     var safeLevel = sanitizeImageScale(level);
     var slider = figure.querySelector('.print-image-scale-range');
     var value = figure.querySelector('.print-image-scale-value');
-    if (slider) slider.value = String(safeLevel);
-    if (value) value.textContent = safeLevel + '%';
+    if (slider) updateImageSliderVisual(slider, safeLevel);
+    if (value) value.textContent = formatImageScaleLabel(safeLevel);
   }
 
   function closeImageToolPanels(exceptFigure) {
@@ -2016,28 +2158,23 @@
     figure.classList.add('print-image-tools-open');
   }
 
-  function applyFigureScaleToFigure(figure, level) {
+  function applyFigureScaleToFigure(figure, level, options) {
     if (!figure) return;
+    var config = options || {};
     var safeLevel = sanitizeImageScale(level);
-    var factor = imageScaleValue(safeLevel);
+    var factor = imageScaleValue(safeLevel, figure);
     figure.dataset.printImageScale = String(safeLevel);
     figure.style.setProperty('--print-image-scale', String(factor));
     figure.classList.toggle('print-image-resized', safeLevel < 100);
-    updateFigureScaleUi(figure, safeLevel);
+    if (!config.skipUi) {
+      updateFigureScaleUi(figure, safeLevel);
+    }
   }
 
   function applyFigureScalePreview(figureId, level) {
     var safeLevel = sanitizeImageScale(level);
-    var touchedFigures = [];
-    Array.from(document.querySelectorAll('figure.image[data-print-persist-id]')).forEach(function (figure) {
-      var key = figure.dataset && figure.dataset.printPersistId ? figure.dataset.printPersistId : '';
-      if (key !== figureId) return;
-      applyFigureScaleToFigure(figure, safeLevel);
-      touchedFigures.push(figure);
-    });
-    if (touchedFigures.length) {
-      scheduleFigureToolStateRefresh(touchedFigures);
-    }
+    var figure = persistedNodeById(figureId);
+    applyFigureScaleToFigure(figure, safeLevel);
   }
 
   function currentStoredImageScale(figureId) {
@@ -2049,6 +2186,7 @@
     Array.from(document.querySelectorAll('figure.image[data-print-persist-id]')).forEach(function (figure) {
       var key = figure.dataset && figure.dataset.printPersistId ? figure.dataset.printPersistId : '';
       if (!key) return;
+      figureBaseScaleFactor(figure);
       applyFigureScaleToFigure(figure, currentStoredImageScale(key));
       touchedFigures.push(figure);
     });
@@ -3124,7 +3262,366 @@
     return labels.filter(Boolean).join(' · ');
   }
 
+  function pagedRenderReady() {
+    if (actualRenderedPageNodes().length) return true;
+    return !!(document.documentElement && document.documentElement.getAttribute('data-notion-printer-paged-ready') === 'true');
+  }
+
+  function actualRenderedPageNodes() {
+    return Array.from(document.querySelectorAll('.pagedjs_page')).filter(function (node) {
+      return !!(node && node.nodeType === 1 && !(node.closest && node.closest('.print-page-sidebar')));
+    });
+  }
+
+  function normalizedRenderedPageNodes() {
+    return actualRenderedPageNodes().map(function (node, index) {
+      var pageNumber = String(index + 1);
+      if (node && node.getAttribute && node.getAttribute('data-page-number') !== pageNumber) {
+        node.setAttribute('data-page-number', pageNumber);
+      }
+      return node;
+    });
+  }
+
+  function resetPageSidebarDom() {
+    pageSidebarHydrationVersion += 1;
+    if (pageSidebarHydrationTimer) {
+      clearTimeout(pageSidebarHydrationTimer);
+      pageSidebarHydrationTimer = null;
+    }
+    Array.from(document.querySelectorAll('.print-page-sidebar, .print-page-sidebar-toggle')).forEach(function (node) {
+      if (node && node.parentNode) {
+        node.parentNode.removeChild(node);
+      }
+    });
+    pageSidebar = null;
+    pageSidebarList = null;
+    pageSidebarToggleButton = null;
+  }
+
+  function handlePagedRenderReady() {
+    resetPageSidebarDom();
+    ensurePageSidebar();
+    refreshPageSidebar();
+    [120, 400, 1200].forEach(function (delay) {
+      setTimeout(refreshPageSidebar, delay);
+    });
+    if (bootstrapEditorUi()) {
+      refreshNavigatorOptions();
+    }
+  }
+
+  function watchPagedRenderReady() {
+    if (pagedReadyObserver) return;
+    var root = document.documentElement || document.body;
+    if (!root) return;
+    pagedReadyObserver = new MutationObserver(function () {
+      if (!pagedRenderReady()) return;
+      if (pagedReadyObserver) {
+        pagedReadyObserver.disconnect();
+        pagedReadyObserver = null;
+      }
+      handlePagedRenderReady();
+    });
+    pagedReadyObserver.observe(root, {
+      attributes: true,
+      attributeFilter: ['data-notion-printer-paged-ready'],
+      childList: true,
+      subtree: true
+    });
+  }
+
+  function renderedPageNodes() {
+    var pages = normalizedRenderedPageNodes();
+    if (pages.length) return pages;
+    if (pagedRenderReady()) return [];
+    return Array.from(document.querySelectorAll('article.page'));
+  }
+
+  function sidebarRenderedPageNodes() {
+    return normalizedRenderedPageNodes();
+  }
+
+  function schedulePageSidebarRefresh(delay) {
+    if (pageSidebarRefreshTimer) {
+      clearTimeout(pageSidebarRefreshTimer);
+    }
+    pageSidebarRefreshTimer = setTimeout(function () {
+      pageSidebarRefreshTimer = null;
+      refreshPageSidebar();
+    }, typeof delay === 'number' ? delay : 160);
+  }
+
+  function currentViewportPageNumber() {
+    var pages = renderedPageNodes();
+    if (!pages.length) return '';
+    var viewportAnchor = Math.max(120, Math.round((window.innerHeight || 0) * 0.28));
+    var bestPage = null;
+    var bestDistance = Number.POSITIVE_INFINITY;
+    pages.forEach(function (pageNode) {
+      if (!pageNode || !pageNode.getBoundingClientRect) return;
+      var rect = pageNode.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > (window.innerHeight || 0)) return;
+      var distance = Math.abs(rect.top - viewportAnchor);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestPage = pageNode;
+      }
+    });
+    if (!bestPage) bestPage = pages[0];
+    if (!bestPage) return '';
+    return String(bestPage.getAttribute('data-page-number') || (pages.indexOf(bestPage) + 1));
+  }
+
+  function pageSidebarSummaryText(pageNode) {
+    if (!pageNode) return '페이지 미리보기';
+    var text = String(pageNode.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '페이지 미리보기';
+    return text.slice(0, 96);
+  }
+
+  function buildPageSidebarThumbnail(pageNode, pageNumber) {
+    var thumb = document.createElement('span');
+    thumb.className = 'print-page-sidebar-thumb';
+
+    var viewport = document.createElement('span');
+    viewport.className = 'print-page-sidebar-thumb-viewport';
+    thumb.appendChild(viewport);
+
+    var rect = pageNode.getBoundingClientRect ? pageNode.getBoundingClientRect() : null;
+    var pageWidth = Math.max(1, Math.round((rect && rect.width) || pageNode.offsetWidth || 794));
+    var pageHeight = Math.max(1, Math.round((rect && rect.height) || pageNode.offsetHeight || 1123));
+    var viewportWidth = 148;
+    var viewportHeight = Math.max(196, Math.round(viewportWidth * (pageHeight / pageWidth)));
+    var scale = viewportWidth / pageWidth;
+
+    thumb.style.height = viewportHeight + 'px';
+    viewport.style.height = viewportHeight + 'px';
+    var sheet = document.createElement('span');
+    sheet.className = 'print-page-sidebar-sheet';
+    sheet.style.width = pageWidth + 'px';
+    sheet.style.height = pageHeight + 'px';
+    sheet.style.transform = 'scale(' + scale.toFixed(6) + ')';
+    sheet.style.pointerEvents = 'none';
+    viewport.appendChild(sheet);
+
+    var clone = pageNode.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.setAttribute('aria-hidden', 'true');
+    clone.classList.add('print-page-sidebar-sheet-clone');
+    clone.style.pointerEvents = 'none';
+    Array.from(clone.querySelectorAll('script, style, .print-page-sidebar, .print-page-sidebar-toggle, .print-editor-banner, .print-editor-panel, .print-editor-launcher, .print-image-tools, .print-image-resize-handle, .print-insert-actions, .print-page-dropzone, .print-inline-dropzone, .print-dropzone-active-indicator, .print-page-target-highlight, .print-editor-target-highlight')).forEach(function (node) {
+      node.remove();
+    });
+    Array.from(clone.querySelectorAll('[id]')).forEach(function (node) {
+      node.removeAttribute('id');
+    });
+    sheet.appendChild(clone);
+    return thumb;
+  }
+
+  function buildPageSidebarFallbackThumbnail() {
+    var thumb = document.createElement('span');
+    thumb.className = 'print-page-sidebar-thumb';
+    var viewport = document.createElement('span');
+    viewport.className = 'print-page-sidebar-thumb-viewport';
+    thumb.appendChild(viewport);
+    thumb.style.height = '208px';
+    viewport.style.height = '208px';
+    var sheet = document.createElement('span');
+    sheet.className = 'print-page-sidebar-sheet';
+    sheet.style.width = '148px';
+    sheet.style.height = '196px';
+    viewport.appendChild(sheet);
+    return thumb;
+  }
+
+  function schedulePageSidebarHydration(pages) {
+    pageSidebarHydrationVersion += 1;
+    if (pageSidebarHydrationTimer) {
+      clearTimeout(pageSidebarHydrationTimer);
+      pageSidebarHydrationTimer = null;
+    }
+    var snapshotPages = Array.isArray(pages) ? pages.slice() : [];
+    var hydrationVersion = pageSidebarHydrationVersion;
+    var run = function () {
+      pageSidebarHydrationTimer = null;
+      if (!pageSidebarList || hydrationVersion !== pageSidebarHydrationVersion) return;
+      snapshotPages.forEach(function (pageNode, index) {
+        if (!pageNode || hydrationVersion !== pageSidebarHydrationVersion) return;
+        var pageNumber = String(pageNode.getAttribute('data-page-number') || (index + 1));
+        var item = pageSidebarList.querySelector('.print-page-sidebar-item[data-page-number="' + pageNumber + '"]');
+        if (!item) return;
+        var thumb = null;
+        try {
+          thumb = buildPageSidebarThumbnail(pageNode, pageNumber);
+        } catch (error) {
+          thumb = buildPageSidebarFallbackThumbnail();
+        }
+        var currentThumb = item.querySelector('.print-page-sidebar-thumb');
+        if (currentThumb && currentThumb.parentNode === item) {
+          item.replaceChild(thumb, currentThumb);
+        } else {
+          item.insertBefore(thumb, item.firstChild || null);
+        }
+      });
+      schedulePageSidebarSync();
+    };
+    if (window.requestAnimationFrame) {
+      pageSidebarHydrationTimer = setTimeout(function () {
+        window.requestAnimationFrame(run);
+      }, 24);
+      return;
+    }
+    pageSidebarHydrationTimer = setTimeout(run, 24);
+  }
+
+  function ensurePageSidebar() {
+    if (pageSidebar && pageSidebarList && pageSidebarToggleButton) {
+      if (pageSidebar.isConnected && pageSidebarList.isConnected && pageSidebarToggleButton.isConnected) return;
+      pageSidebar = null;
+      pageSidebarList = null;
+      pageSidebarToggleButton = null;
+    }
+    if (!document.body) return;
+
+    if (!pageSidebarToggleButton) {
+      pageSidebarToggleButton = document.createElement('button');
+      pageSidebarToggleButton.type = 'button';
+      pageSidebarToggleButton.className = 'print-page-sidebar-toggle';
+      pageSidebarToggleButton.setAttribute('data-pagedjs-ignore', 'true');
+      pageSidebarToggleButton.addEventListener('click', function () {
+        setPageSidebarOpen(!pageSidebarOpen);
+      });
+      document.body.appendChild(pageSidebarToggleButton);
+    }
+
+    if (!pageSidebar) {
+      pageSidebar = document.createElement('aside');
+      pageSidebar.className = 'print-page-sidebar';
+      pageSidebar.setAttribute('data-pagedjs-ignore', 'true');
+
+      var header = document.createElement('div');
+      header.className = 'print-page-sidebar-header';
+
+      var title = document.createElement('div');
+      title.className = 'print-page-sidebar-title';
+      title.textContent = '페이지';
+      header.appendChild(title);
+
+      var subtitle = document.createElement('div');
+      subtitle.className = 'print-page-sidebar-subtitle';
+      subtitle.textContent = '';
+      header.appendChild(subtitle);
+
+      pageSidebar.appendChild(header);
+
+      pageSidebarList = document.createElement('div');
+      pageSidebarList.className = 'print-page-sidebar-list';
+      pageSidebar.appendChild(pageSidebarList);
+      document.body.appendChild(pageSidebar);
+    }
+
+    setPageSidebarOpen(pageSidebarOpen);
+  }
+
+  function setPageSidebarOpen(nextOpen) {
+    pageSidebarOpen = !!nextOpen;
+    if (document.body) {
+      document.body.classList.toggle('print-page-sidebar-open', pageSidebarOpen);
+    }
+    if (pageSidebarToggleButton) {
+      pageSidebarToggleButton.textContent = pageSidebarOpen ? '페이지 목록 숨기기' : '페이지 목록';
+      pageSidebarToggleButton.setAttribute('aria-expanded', pageSidebarOpen ? 'true' : 'false');
+    }
+  }
+
+  function pruneEditorBannerForMinimalMode() {
+    if (!editorBanner) return;
+    Array.from(editorBanner.querySelectorAll('button')).forEach(function (button) {
+      var label = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      var role = String(button.getAttribute('data-editor-role') || '').trim();
+      var shouldHide = uiMode === 'minimal' && (role === 'panel-toggle' || /자동\s*정리|문제\s*없음|추천|수동\s*조정|이미지\s*추천|블록\s*조정|조정\s*닫기/.test(label));
+      button.style.display = shouldHide ? 'none' : '';
+    });
+    var summary = editorBanner.querySelector('.print-editor-banner-summary');
+    if (summary) summary.style.display = uiMode === 'minimal' ? 'none' : '';
+    var status = editorBanner.querySelector('.print-editor-banner-status');
+    if (status) status.style.display = uiMode === 'minimal' ? 'none' : '';
+  }
+
+  function syncPageSidebarActiveState() {
+    if (!pageSidebarList) return;
+    var currentPageNumber = currentViewportPageNumber();
+    pageSidebarActivePageNumber = currentPageNumber;
+    Array.from(pageSidebarList.querySelectorAll('.print-page-sidebar-item')).forEach(function (button) {
+      var isActive = currentPageNumber && button.getAttribute('data-page-number') === currentPageNumber;
+      button.classList.toggle('is-active', !!isActive);
+      if (isActive && pageSidebarOpen && button.scrollIntoView) {
+        button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    });
+  }
+
+  function schedulePageSidebarSync() {
+    if (pageSidebarSyncScheduled) return;
+    pageSidebarSyncScheduled = true;
+    var run = function () {
+      pageSidebarSyncScheduled = false;
+      syncPageSidebarActiveState();
+    };
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(run);
+      return;
+    }
+    setTimeout(run, 16);
+  }
+
+  function refreshPageSidebar() {
+    ensurePageSidebar();
+    if (!pageSidebarList) return;
+    var pages = sidebarRenderedPageNodes();
+    pageSidebarList.innerHTML = '';
+    if (!pages.length) {
+      pageSidebarEmptyAttemptCount += 1;
+      schedulePageSidebarRefresh(pagedRenderReady() ? 900 : 260);
+      return;
+    }
+    pageSidebarEmptyAttemptCount = 0;
+    pages.forEach(function (pageNode, index) {
+      var pageNumber = String(pageNode.getAttribute('data-page-number') || (index + 1));
+      if (!pageNumber) return;
+
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'print-page-sidebar-item';
+      item.setAttribute('data-page-number', pageNumber);
+
+      var thumb = buildPageSidebarFallbackThumbnail();
+      item.appendChild(thumb);
+
+      var numberLabel = document.createElement('span');
+      numberLabel.className = 'print-page-sidebar-number';
+      numberLabel.textContent = pageNumber;
+      item.appendChild(numberLabel);
+      item.setAttribute('aria-label', '페이지 ' + pageNumber);
+      item.addEventListener('click', function () {
+        pageNode.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        pageSidebarActivePageNumber = pageNumber;
+        schedulePageSidebarSync();
+      });
+      pageSidebarList.appendChild(item);
+    });
+    if (!pageSidebarList.children.length && pageSidebarEmptyAttemptCount < 12) {
+      schedulePageSidebarRefresh(260);
+      return;
+    }
+    schedulePageSidebarHydration(pages);
+    schedulePageSidebarSync();
+  }
+
   function refreshNavigatorOptions() {
+    pruneEditorBannerForMinimalMode();
     if (editorBlockSelect) {
       var previousBlockValue = editorBlockSelect.value;
       editorBlockSelect.innerHTML = '';
@@ -3161,6 +3658,7 @@
         editorPageSelect.value = String(selectedTargetState.pageNumber);
       }
     }
+    refreshPageSidebar();
     updateEditorUiSummary();
   }
 
@@ -3799,6 +4297,10 @@
     }
     directManipulationRetryTimer = setTimeout(function () {
       directManipulationRetryTimer = null;
+      if (imageScaleSliderDragState || imageResizeDragState) {
+        directManipulationRefreshQueuedWhileDragging = true;
+        return;
+      }
       restoreStoredRenderedLayoutOnce();
       installDirectPageManipulation();
       refreshNavigatorOptions();
@@ -5495,24 +5997,33 @@
       var sliderRow = document.createElement('div');
       sliderRow.className = 'print-image-tools-row';
 
-      var scaleRange = document.createElement('input');
-      scaleRange.type = 'range';
+      var scaleRange = document.createElement('div');
       scaleRange.className = 'print-image-scale-range';
-      scaleRange.min = String(minimumImageScalePct);
-      scaleRange.max = '100';
-      scaleRange.step = '1';
-      scaleRange.value = String(currentStoredImageScale(figureId));
+      scaleRange.tabIndex = 0;
+      scaleRange.setAttribute('role', 'slider');
+      scaleRange.setAttribute('aria-label', '이미지 크기');
       scaleRange.title = imageRecommendation && imageRecommendation.targetScalePct < 100 ? (imageRecommendation.label + ' - ' + (joinRecommendationReasons(imageRecommendation) || '이미지 축소 추천')) : '이미지 크기 직접 조절';
       if (imageRecommendation && imageRecommendation.targetScalePct < 100) {
         scaleRange.dataset.printSuggestedScale = String(imageRecommendation.targetScalePct);
       } else {
         delete scaleRange.dataset.printSuggestedScale;
       }
+
+      var scaleTrack = document.createElement('div');
+      scaleTrack.className = 'print-image-scale-track';
+      var scaleFill = document.createElement('div');
+      scaleFill.className = 'print-image-scale-fill';
+      scaleTrack.appendChild(scaleFill);
+      var scaleThumb = document.createElement('div');
+      scaleThumb.className = 'print-image-scale-thumb';
+      scaleTrack.appendChild(scaleThumb);
+      scaleRange.appendChild(scaleTrack);
+      updateImageSliderVisual(scaleRange, currentStoredImageScale(figureId));
       sliderRow.appendChild(scaleRange);
 
       var scaleValue = document.createElement('span');
       scaleValue.className = 'print-image-scale-value';
-      scaleValue.textContent = scaleRange.value + '%';
+      scaleValue.textContent = formatImageScaleLabel(currentStoredImageScale(figureId));
       sliderRow.appendChild(scaleValue);
 
       imageTools.appendChild(sliderRow);
@@ -5524,6 +6035,7 @@
       widthInput.type = 'number';
       widthInput.className = 'print-image-width-input';
       widthInput.min = String(minimumFigureWidthPx(figure));
+      widthInput.max = String(maximumFigureWidthPx(figure));
       widthInput.step = '1';
       widthInput.inputMode = 'numeric';
       widthInput.value = String(Math.max(1, figureRenderedWidthPx(figure) || 1));
@@ -5590,8 +6102,8 @@
         recommendButton.textContent = '추천';
         recommendButton.title = imageRecommendation.label + ' - ' + (joinRecommendationReasons(imageRecommendation) || '추천 크기로 조정');
         recommendButton.addEventListener('click', function () {
-          scaleRange.value = String(imageRecommendation.targetScalePct);
-          scaleValue.textContent = imageRecommendation.targetScalePct + '%';
+          updateImageSliderVisual(scaleRange, imageRecommendation.targetScalePct);
+          scaleValue.textContent = formatImageScaleLabel(imageRecommendation.targetScalePct);
           setFigureScale(figureId, imageRecommendation.targetScalePct, 'image_recommend_button');
         });
         actionRow.appendChild(recommendButton);
@@ -5603,7 +6115,7 @@
       resetButton.textContent = '기본';
       resetButton.title = '이미지 크기 기본값으로';
       resetButton.addEventListener('click', function () {
-        scaleRange.value = '100';
+        updateImageSliderVisual(scaleRange, 100);
         scaleValue.textContent = '100%';
         setFigureScale(figureId, 100, 'image_reset_button');
       });
@@ -5638,30 +6150,60 @@
       if (!resizeHandle.dataset.printResizeBound) {
         resizeHandle.dataset.printResizeBound = 'true';
         resizeHandle.addEventListener('pointerdown', function (event) {
+          if (event && event.preventDefault) {
+            event.preventDefault();
+          }
+          if (event && event.stopPropagation) {
+            event.stopPropagation();
+          }
           beginImageResizeDrag(event, figure);
         });
       }
 
-      scaleRange.addEventListener('pointerdown', function () {
-        openImageToolPanel(figure);
-        scaleRange.dataset.printScaleStart = String(currentStoredImageScale(figureId));
+      scaleRange.addEventListener('pointerdown', function (event) {
+        beginImageScaleSliderDrag(event, figure, scaleRange, scaleValue, figureId);
+      });
+      scaleRange.addEventListener('click', function (event) {
+        if (event && event.stopPropagation) {
+          event.stopPropagation();
+        }
       });
       scaleRange.addEventListener('focus', function () {
         openImageToolPanel(figure);
         scaleRange.dataset.printScaleStart = String(currentStoredImageScale(figureId));
       });
-      scaleRange.addEventListener('input', function () {
+      scaleRange.addEventListener('keydown', function (event) {
+        if (!event) return;
+        var currentValue = imageSliderValue(scaleRange);
+        var nextValue = currentValue;
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = currentValue - imageScaleStepPct;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = currentValue + imageScaleStepPct;
+        if (event.key === 'PageDown') nextValue = currentValue - 2;
+        if (event.key === 'PageUp') nextValue = currentValue + 2;
+        if (event.key === 'Home') nextValue = minimumImageScalePct;
+        if (event.key === 'End') nextValue = 100;
+        if (nextValue === currentValue) return;
+        event.preventDefault();
         openImageToolPanel(figure);
-        var value = sanitizeImageScale(scaleRange.value);
-        scaleValue.textContent = value + '%';
-        applyFigureScalePreview(figureId, value);
+        updateImageSliderVisual(scaleRange, nextValue);
+        scaleValue.textContent = formatImageScaleLabel(nextValue);
+        setFigureScale(figureId, nextValue, 'image_slider_keyboard');
       });
 
       var commitScaleChange = function () {
+        if (imageScaleSliderDragState && imageScaleSliderDragState.slider === scaleRange) {
+          stopImageScaleSliderDrag(true);
+          return;
+        }
+        if (!Object.prototype.hasOwnProperty.call(scaleRange.dataset, 'printScaleStart')) {
+          setImageSliderDraggingState(figure, false);
+          return;
+        }
+        setImageSliderDraggingState(figure, false);
         var startValue = sanitizeImageScale(scaleRange.dataset.printScaleStart || currentStoredImageScale(figureId));
-        var nextValue = sanitizeImageScale(scaleRange.value);
+        var nextValue = imageSliderValue(scaleRange);
         delete scaleRange.dataset.printScaleStart;
-        scaleValue.textContent = nextValue + '%';
+        scaleValue.textContent = formatImageScaleLabel(nextValue);
         if (nextValue === startValue) {
           applyFigureScalePreview(figureId, currentStoredImageScale(figureId));
           return;
@@ -5669,7 +6211,6 @@
         setFigureScale(figureId, nextValue, 'image_slider');
       };
 
-      scaleRange.addEventListener('change', commitScaleChange);
       scaleRange.addEventListener('keyup', function (event) {
         if (!event || (event.key !== 'Enter' && event.key !== ' ')) return;
         commitScaleChange();
@@ -5721,12 +6262,15 @@
         closeImageToolPanels();
       });
       document.addEventListener('pointermove', function (event) {
+        updateImageScaleSliderDrag(event);
         updateImageResizeDrag(event);
       });
-      document.addEventListener('pointerup', function () {
+      document.addEventListener('pointerup', function (event) {
+        stopImageScaleSliderDrag(true, event);
         stopImageResizeDrag(true);
       });
-      document.addEventListener('pointercancel', function () {
+      document.addEventListener('pointercancel', function (event) {
+        stopImageScaleSliderDrag(true, event);
         stopImageResizeDrag(false);
       });
     }
@@ -5765,6 +6309,7 @@
     restoreStoredRenderedLayoutOnce();
     installDirectPageManipulation();
     watchDirectManipulation();
+    refreshNavigatorOptions();
     [200, 700, 1500, 3200].forEach(function (delay) {
       setTimeout(function () {
         restoreStoredRenderedLayoutOnce();
@@ -5896,7 +6441,7 @@
       '  body.print-ready figure.image[data-print-persist-id]{position:relative;overflow:visible;display:flex;flex-direction:column;align-items:center;text-align:center;}',
       '  body.print-ready figure.image[data-print-persist-id] > a, body.print-ready figure.image[data-print-persist-id] > img{display:block;}',
       '  body.print-ready figure.image[data-print-persist-id] img{margin:0 auto;}',
-      '  body.print-ready figure.image.print-image-resized img{width:calc(100% * var(--print-image-scale, 1))!important;max-width:calc(100% * var(--print-image-scale, 1))!important;}',
+      '  body.print-ready figure.image.print-image-resized img{width:calc(100% * var(--print-image-scale, 1))!important;max-width:calc(100% * var(--print-image-scale, 1))!important;height:auto!important;}',
       '  body.print-ready .print-insert-actions{position:absolute;left:9%;right:9%;top:0;height:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:visible;pointer-events:auto;z-index:9;}',
       '  body.print-ready .print-insert-actions::before{content:"";position:absolute;left:0;right:0;top:0;transform:translateY(-50%);height:2px;border-radius:999px;background:rgba(47,111,237,0.18);transition:background 120ms ease,opacity 120ms ease;opacity:0.85;}',
       '  body.print-ready .print-draggable-candidate:hover{outline:2px solid rgba(154,179,223,0.18);outline-offset:4px;border-radius:10px;}',
@@ -5928,12 +6473,18 @@
       '  body.print-ready figure.image.print-image-group-selected{outline:2px solid rgba(154,179,223,0.52);outline-offset:8px;border-radius:14px;}',
       '  body.print-ready .print-image-tools{position:absolute;top:12px;left:50%;display:flex;flex-direction:column;gap:8px;width:min(320px, calc(100vw - 40px));max-width:calc(100vw - 40px);padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:var(--print-ui-surface);color:var(--print-ui-text);box-shadow:var(--print-ui-shadow);z-index:8;opacity:0;transform:translate(-50%,-6px) scale(0.96);transform-origin:center top;transition:opacity 140ms ease,transform 140ms ease;pointer-events:none;}',
       '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-tools, body.print-ready figure.image[data-print-persist-id]:focus-within .print-image-tools, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-tools{opacity:1;transform:translate(-50%,0) scale(1);pointer-events:auto;}',
+      '  body.print-ready figure.image.print-image-slider-active .print-image-tools{transition:none!important;transform:translate(-50%,0) scale(1)!important;}',
       '  body.print-ready .print-image-tools-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.72rem;font-weight:800;letter-spacing:0.01em;color:var(--print-ui-muted);}',
       '  body.print-ready .print-image-selection-count{display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.08);color:var(--print-ui-text);font-size:0.68rem;font-weight:800;}',
       '  body.print-ready .print-image-width-live{font-size:0.72rem;line-height:1.45;color:var(--print-ui-muted);}',
       '  body.print-ready .print-image-tools-row{display:flex;align-items:center;gap:10px;}',
       '  body.print-ready .print-image-tools-actions{justify-content:flex-end;flex-wrap:wrap;}',
-      '  body.print-ready .print-image-scale-range{flex:1;accent-color:#2f6fed;cursor:pointer;}',
+      '  body.print-ready .print-image-scale-range{--print-image-thumb-scale:1;position:relative;display:flex;align-items:center;flex:1;min-height:26px;cursor:ew-resize;touch-action:none;-webkit-user-select:none;user-select:none;outline:none;}',
+      '  body.print-ready .print-image-scale-track{position:relative;width:100%;height:6px;border-radius:999px;background:rgba(255,255,255,0.14);overflow:visible;}',
+      '  body.print-ready .print-image-scale-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:999px;background:linear-gradient(90deg, rgba(47,111,237,0.96), rgba(154,179,223,0.96));will-change:width;}',
+      '  body.print-ready .print-image-scale-thumb{position:absolute;top:50%;left:100%;width:16px;height:16px;border:2px solid #d9e5fb;border-radius:999px;background:#182230;box-shadow:0 6px 16px rgba(4,6,10,0.28);transform:translate(-50%,-50%) scale(var(--print-image-thumb-scale));will-change:left,transform;}',
+      '  body.print-ready .print-image-scale-range:focus-visible .print-image-scale-track{box-shadow:0 0 0 3px rgba(47,111,237,0.22);}',
+      '  body.print-ready .print-image-scale-range:focus-visible, body.print-ready figure.image.print-image-slider-active .print-image-scale-range{--print-image-thumb-scale:1.06;}',
       '  body.print-ready .print-image-scale-value{min-width:46px;text-align:right;font-size:0.78rem;font-weight:800;color:var(--print-ui-text);}',
       '  body.print-ready .print-image-width-row{align-items:center;}',
       '  body.print-ready .print-image-width-input{width:92px;border:1px solid var(--print-editor-border);border-radius:10px;padding:7px 9px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.8rem;font-weight:700;}',
@@ -5941,6 +6492,30 @@
       '  body.print-ready .print-image-tool-button{display:inline-flex!important;align-items:center;justify-content:center;min-width:44px;height:28px;border:1px solid var(--print-editor-border);border-radius:999px;padding:0 10px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 8px 14px rgba(4,6,10,0.22);}',
       '  body.print-ready .print-image-tool-button.is-danger{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
       '  body.print-ready .print-image-tool-button:disabled{opacity:0.45;cursor:default;}',
+      '  body.print-ready.print-editor-open{padding-right:0!important;}',
+      '  body.print-ready.print-ui-minimal .print-editor-panel, body.print-ready.print-ui-minimal .print-inline-tools, body.print-ready.print-ui-minimal .print-inline-suggestion-badge, body.print-ready.print-ui-minimal .print-editor-launcher, body.print-ready.print-ui-minimal .print-editor-banner-button[data-editor-role="panel-toggle"], body.print-ready.print-ui-minimal .print-editor-banner-summary, body.print-ready.print-ui-minimal .print-editor-banner-status{display:none!important;}',
+      '  body.print-ready .print-page-sidebar-toggle{position:fixed;top:76px;left:18px;display:inline-flex!important;align-items:center;justify-content:center;min-width:44px;height:36px;padding:0 14px;border:1px solid var(--print-editor-border);border-radius:999px;background:rgba(18,22,27,0.92);color:var(--print-ui-text);font:inherit;font-size:0.76rem;font-weight:800;letter-spacing:0.01em;cursor:pointer;box-shadow:0 14px 28px rgba(4,6,10,0.26);z-index:18;transition:left 180ms ease,background 160ms ease,box-shadow 160ms ease;}',
+      '  body.print-ready .print-page-sidebar-toggle:hover{background:rgba(29,34,41,0.96);box-shadow:0 16px 30px rgba(4,6,10,0.3);}',
+      '  body.print-ready .print-page-sidebar{position:fixed;top:66px;left:12px;bottom:12px;width:196px;padding:14px 10px 16px;border:1px solid var(--print-editor-border);border-radius:22px;background:rgba(18,22,27,0.94);color:var(--print-ui-text);box-shadow:22px 0 52px rgba(4,6,10,0.28);backdrop-filter:blur(14px);z-index:17;display:flex;flex-direction:column;gap:12px;transform:translateX(calc(-100% - 16px));transition:transform 180ms ease;}',
+      '  body.print-ready.print-page-sidebar-open .print-page-sidebar{transform:translateX(0);}',
+      '  body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:154px;}',
+      '  body.print-ready.print-page-sidebar-open .pagedjs_pages{margin-left:206px;transition:margin-left 180ms ease;}',
+      '  body.print-ready .print-page-sidebar-header{display:flex;flex-direction:column;gap:4px;padding:0 6px;}',
+      '  body.print-ready .print-page-sidebar-title{font-size:0.96rem;font-weight:900;line-height:1.2;color:var(--print-ui-text);}',
+      '  body.print-ready .print-page-sidebar-subtitle{display:none!important;}',
+      '  body.print-ready .print-page-sidebar-list{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;gap:18px;padding:6px 2px 12px;}',
+      '  body.print-ready .print-page-sidebar-item{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;padding:0;border:none;background:transparent;color:var(--print-ui-text);text-align:center;font:inherit;cursor:pointer;transition:transform 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-item:hover{background:transparent;transform:translateY(-1px);}',
+      '  body.print-ready .print-page-sidebar-item.is-active{background:transparent;box-shadow:none;}',
+      '  body.print-ready .print-page-sidebar-thumb{position:relative;flex:0 0 auto;width:148px;max-width:100%;background:transparent;overflow:hidden;border-radius:14px;}',
+      '  body.print-ready .print-page-sidebar-thumb-viewport{position:relative;display:block;width:100%;height:100%;padding:6px;background:transparent;overflow:hidden;border-radius:14px;}',
+      '  body.print-ready .print-page-sidebar-sheet{position:relative;display:block;transform-origin:top left;border-radius:12px;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.08), 0 12px 20px rgba(4,6,10,0.16);pointer-events:none;}',
+      '  body.print-ready .print-page-sidebar-sheet .pagedjs_page, body.print-ready .print-page-sidebar-sheet article.page{margin:0!important;box-shadow:none!important;}',
+      '  body.print-ready .print-page-sidebar-sheet .print-editor-banner, body.print-ready .print-page-sidebar-sheet .print-editor-panel, body.print-ready .print-page-sidebar-sheet .print-editor-launcher, body.print-ready .print-page-sidebar-sheet .print-insert-actions, body.print-ready .print-page-sidebar-sheet .print-page-dropzone, body.print-ready .print-page-sidebar-sheet .print-inline-dropzone, body.print-ready .print-page-sidebar-sheet .print-image-tools, body.print-ready .print-page-sidebar-sheet .print-image-resize-handle, body.print-ready .print-page-sidebar-sheet .print-page-target-highlight, body.print-ready .print-page-sidebar-sheet .print-editor-target-highlight{display:none!important;}',
+      '  body.print-ready .print-page-sidebar-thumb-number{display:none!important;}',
+      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-sheet{box-shadow:inset 0 0 0 2px rgba(154,179,223,0.54), 0 16px 26px rgba(4,6,10,0.2);}',
+      '  body.print-ready .print-page-sidebar-number{font-size:0.76rem;font-weight:900;line-height:1;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-number{color:var(--print-ui-text);}',
       '  body.print-ready .print-image-resize-handle{position:absolute;right:-10px;bottom:-10px;display:inline-flex!important;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--print-editor-border);border-radius:999px;background:var(--print-ui-surface-strong);color:var(--print-ui-text);font:inherit;font-size:0.88rem;font-weight:800;cursor:nwse-resize;box-shadow:0 10px 16px rgba(4,6,10,0.24);z-index:8;opacity:0;transform:scale(0.96);transition:opacity 120ms ease,transform 120ms ease;}',
       '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-resize-handle, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-resize-handle, body.print-ready figure.image.print-selected-target .print-image-resize-handle{opacity:1;transform:scale(1);}',
       '  body.print-ready.print-image-resizing .print-image-resize-handle{opacity:1;}',
@@ -5951,7 +6526,7 @@
       '  body.print-ready .print-page-target-highlight{box-shadow:0 0 0 4px rgba(154,179,223,0.16), 0 18px 34px rgba(4,6,10,0.22)!important;}',
       '  body.print-ready .print-editor-target-highlight{box-shadow:0 0 0 3px rgba(154,179,223,0.22)!important;}',
       '  @media (max-width: 1280px){body.print-ready.print-editor-open{padding-right:0;}body.print-ready .print-editor-panel{width:min(400px, calc(100vw - 28px));}}',
-      '  @media (max-width: 900px){body.print-ready .print-editor-banner{padding:10px 12px;}body.print-ready .print-editor-panel{top:auto;left:12px;right:12px;bottom:12px;width:auto;max-height:78vh;border-radius:18px;}body.print-ready .print-editor-settings{grid-template-columns:1fr;}body.print-ready .print-editor-summary{grid-template-columns:repeat(2,minmax(0,1fr));}}',
+      '  @media (max-width: 900px){body.print-ready .print-editor-banner{padding:10px 12px;}body.print-ready .print-editor-panel{top:auto;left:12px;right:12px;bottom:12px;width:auto;max-height:78vh;border-radius:18px;}body.print-ready .print-editor-settings{grid-template-columns:1fr;}body.print-ready .print-editor-summary{grid-template-columns:repeat(2,minmax(0,1fr));}body.print-ready .print-page-sidebar{width:min(64vw,196px);}body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:calc(min(64vw,196px) - 42px);}body.print-ready.print-page-sidebar-open .pagedjs_pages{margin-left:0;}}',
       '}',
       '@media print {',
       '  body.print-ready .print-editor-banner,',
@@ -6068,8 +6643,7 @@
   }
 
   function pagesRootReady() {
-    var root = document.querySelector('.pagedjs_pages');
-    return !!(root && root.querySelector('.pagedjs_area'));
+    return pagedRenderReady();
   }
 
   function bootstrapEditorUi() {
@@ -6554,9 +7128,112 @@
     }
     if (state.previewLevel === state.startLevel) {
       applyFigureScalePreview(state.figureId, state.startLevel);
+      if (directManipulationRefreshQueuedWhileDragging) {
+        directManipulationRefreshQueuedWhileDragging = false;
+        scheduleDirectManipulationRefresh(0);
+      }
       return;
     }
     setFigureScale(state.figureId, state.previewLevel, 'image_drag');
+    if (directManipulationRefreshQueuedWhileDragging) {
+      directManipulationRefreshQueuedWhileDragging = false;
+      scheduleDirectManipulationRefresh(0);
+    }
+  }
+
+  function syncImageScaleSliderDragStateNodes() {
+    if (!imageScaleSliderDragState) return null;
+    var currentFigure = persistedNodeById(imageScaleSliderDragState.figureId) || imageScaleSliderDragState.figure;
+    if (!currentFigure) return null;
+    var currentSlider = currentFigure.querySelector('.print-image-scale-range') || imageScaleSliderDragState.slider;
+    var currentValueNode = currentFigure.querySelector('.print-image-scale-value') || imageScaleSliderDragState.valueNode || null;
+    imageScaleSliderDragState.figure = currentFigure;
+    imageScaleSliderDragState.slider = currentSlider;
+    imageScaleSliderDragState.valueNode = currentValueNode;
+    return imageScaleSliderDragState;
+  }
+
+  function updateImageScaleSliderDrag(event) {
+    if (!imageScaleSliderDragState || !event) return;
+    if (typeof imageScaleSliderDragState.pointerId === 'number' && typeof event.pointerId === 'number' && event.pointerId !== imageScaleSliderDragState.pointerId) {
+      return;
+    }
+    var state = syncImageScaleSliderDragStateNodes();
+    if (!state || !state.slider || !state.figure) return;
+    var sliderSpan = 100 - minimumImageScalePct;
+    var sliderRect = state.slider.getBoundingClientRect ? state.slider.getBoundingClientRect() : null;
+    var sliderWidthPx = sliderRect && sliderRect.width > 0 ? sliderRect.width : (state.sliderWidthPx || 1);
+    var deltaRatio = (event.clientX - state.pointerLastX) / sliderWidthPx;
+    var nextValue = sanitizeImageScale(state.lastLevel + (deltaRatio * sliderSpan));
+    state.pointerLastX = event.clientX;
+    state.sliderWidthPx = sliderWidthPx;
+    state.lastLevel = nextValue;
+    updateImageSliderVisual(state.slider, nextValue);
+    if (state.valueNode) {
+      state.valueNode.textContent = formatImageScaleLabel(nextValue);
+    }
+    setImageSliderDraggingState(state.figure, true);
+    applyFigureScaleToFigure(state.figure, nextValue, { skipUi: true });
+  }
+
+  function stopImageScaleSliderDrag(commit, event) {
+    if (!imageScaleSliderDragState) return;
+    if (event && typeof imageScaleSliderDragState.pointerId === 'number' && typeof event.pointerId === 'number' && event.pointerId !== imageScaleSliderDragState.pointerId) {
+      return;
+    }
+    var state = syncImageScaleSliderDragStateNodes() || imageScaleSliderDragState;
+    imageScaleSliderDragState = null;
+    setImageSliderDraggingState(state.figure, false);
+    if (state.slider && state.slider.dataset) {
+      delete state.slider.dataset.printScaleStart;
+    }
+    var nextValue = sanitizeImageScale(state.lastLevel);
+    if (!commit || !(nextValue > 0)) {
+      applyFigureScalePreview(state.figureId, state.startLevel);
+      if (directManipulationRefreshQueuedWhileDragging) {
+        directManipulationRefreshQueuedWhileDragging = false;
+        scheduleDirectManipulationRefresh(0);
+      }
+      return;
+    }
+    if (Math.abs(nextValue - state.startLevel) < (imageScaleStepPct / 2)) {
+      applyFigureScalePreview(state.figureId, state.startLevel);
+      if (directManipulationRefreshQueuedWhileDragging) {
+        directManipulationRefreshQueuedWhileDragging = false;
+        scheduleDirectManipulationRefresh(0);
+      }
+      return;
+    }
+    setFigureScale(state.figureId, nextValue, state.uiSource || 'image_slider');
+    if (directManipulationRefreshQueuedWhileDragging) {
+      directManipulationRefreshQueuedWhileDragging = false;
+      scheduleDirectManipulationRefresh(0);
+    }
+  }
+
+  function beginImageScaleSliderDrag(event, figure, slider, valueNode, figureId) {
+    if (!event || !figure || !slider || !figureId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openImageToolPanel(figure);
+    var storedStartLevel = currentStoredImageScale(figureId);
+    var dragStartLevel = imageSliderValueFromPointer(slider, event);
+    slider.dataset.printScaleStart = String(storedStartLevel);
+    setImageSliderDraggingState(figure, true);
+    imageScaleSliderDragState = {
+      figure: figure,
+      figureId: figureId,
+      slider: slider,
+      valueNode: valueNode || null,
+      pointerId: typeof event.pointerId === 'number' ? event.pointerId : null,
+      pointerLastX: event.clientX,
+      sliderWidthPx: slider.getBoundingClientRect && slider.getBoundingClientRect().width > 0 ? slider.getBoundingClientRect().width : 1,
+      startLevel: storedStartLevel,
+      dragStartLevel: dragStartLevel,
+      lastLevel: dragStartLevel,
+      uiSource: 'image_slider'
+    };
+    updateImageScaleSliderDrag(event);
   }
 
   function beginImageResizeDrag(event, figure) {
@@ -7330,6 +8007,11 @@
   viewSettings = readStoredViewSettings();
   ensurePaginationStyles();
   applyViewSettings();
+  applyUiMode(resolveUiMode());
+  watchPagedRenderReady();
+  if (pagedRenderReady()) {
+    handlePagedRenderReady();
+  }
   editorUiState = readStoredEditorUiState();
   breakOverrideMap = readStoredBreakOverrides();
   spaceOverrideMap = readStoredSpaceOverrides();
@@ -7343,8 +8025,11 @@
   });
   applyConditionalPageStarts();
   waitForPagedEditorUi();
+  window.addEventListener('scroll', schedulePageSidebarSync, { passive: true });
+  window.addEventListener('resize', refreshPageSidebar);
   window.addEventListener('load', function () {
     waitForPagedEditorUi();
+    refreshPageSidebar();
   });
   } catch (error) {
     showRuntimeFailure((error && error.message) || String(error));

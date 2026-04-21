@@ -7,6 +7,7 @@ DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE_QUICK="$DESKTOP_DIR/notion-printer.desktop"
 DESKTOP_FILE_ADVANCED="$DESKTOP_DIR/notion-printer-advanced.desktop"
 ICON_NAME="text-html"
+ICON_NAME="printer"
 
 mkdir -p "$DESKTOP_DIR"
 chmod +x "$LAUNCHER"

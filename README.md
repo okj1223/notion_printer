@@ -23,6 +23,15 @@ cd /home/robros0/Desktop/ws/notion_printer
 ./notion_print_export_launcher.sh
 ```
 
+## 원클릭 앱 실행
+
+레포 루트의 바로가기 두 개를 더블클릭하면 설치 없이 실행됩니다.
+
+- [Notion Printer.desktop](/home/robros0/Desktop/ws/notion_printer/Notion%20Printer.desktop)
+- [Notion Printer Advanced.desktop](/home/robros0/Desktop/ws/notion_printer/Notion%20Printer%20Advanced.desktop)
+
+이 `.desktop`은 현재 파일 위치를 기준으로 실행기를 찾아서 동작하도록 되어 있어, 저장소 경로가 바뀌어도 재실행 가능합니다.
+
 ## 고급 옵션 GUI
 
 ```bash

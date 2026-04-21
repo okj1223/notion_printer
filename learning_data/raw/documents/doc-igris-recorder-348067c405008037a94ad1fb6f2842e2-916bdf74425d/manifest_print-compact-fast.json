@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "generator_version": "learning-mvp-1",
+  "generated_at": "2026-04-21T05:06:07.651Z",
+  "document_id": "doc_igris-recorder-348067c405008037a94ad1fb6f2842e2_916bdf74425d",
+  "source_hash": "916bdf74425d80e9558b550559d094c9a7231d8c",
+  "input_file": "/home/robros0/Downloads/이그리스레코더/ExportBlock-1be6e849-7ae9-4cc9-8c60-9534745cd00e-Part-1/개인 페이지 & 공유된 페이지/[현대] IGRIS-RECORDER 348067c405008037a94ad1fb6f2842e2.html",
+  "input_name": "[현대] IGRIS-RECORDER 348067c405008037a94ad1fb6f2842e2.html",
+  "output_file": "/home/robros0/Downloads/이그리스레코더/ExportBlock-1be6e849-7ae9-4cc9-8c60-9534745cd00e-Part-1/개인 페이지 & 공유된 페이지/[현대] IGRIS-RECORDER 348067c405008037a94ad1fb6f2842e2_print_compact_fast.html",
+  "output_name": "[현대] IGRIS-RECORDER 348067c405008037a94ad1fb6f2842e2_print_compact_fast.html",
+  "variant": "print_compact_fast",
+  "body_classes": [
+    "print-ready",
+    "print-compact"
+  ],
+  "is_fast_variant": true,
+  "is_compact_variant": true,
+  "features": {
+    "section_count": 0,
+    "paragraph_count": 13,
+    "image_count": 17,
+    "table_count": 1,
+    "bulleted_list_count": 35,
+    "numbered_list_count": 12,
+    "list_item_count": 45,
+    "details_count": 6,
+    "text_char_count": 2575,
+    "block_count": 84
+  },
+  "served_html_file": "/home/robros0/Downloads/이그리스레코더/ExportBlock-1be6e849-7ae9-4cc9-8c60-9534745cd00e-Part-1/개인 페이지 & 공유된 페이지/[현대] IGRIS-RECORDER 348067c405008037a94ad1fb6f2842e2_print_compact_fast.html"
+}

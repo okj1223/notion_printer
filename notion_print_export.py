@@ -26,7 +26,10 @@ from notion_printer_learning import (
 )
 
 Image.MAX_IMAGE_PIXELS = None
-RESAMPLE_LANCZOS = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.ANTIALIAS)
+try:
+    RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:
+    RESAMPLE_LANCZOS = getattr(Image, "LANCZOS", getattr(Image, "ANTIALIAS", Image.BICUBIC))
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1048,6 +1051,15 @@ def build_paged_config_js() -> str:
     },
     after: async function (flow) {
       document.documentElement.setAttribute('data-notion-printer-paged-ready', 'true');
+      try {
+        document.dispatchEvent(new CustomEvent('notion-printer-paged-ready', {
+          detail: {
+            pageCount: flow && Array.isArray(flow.pages) ? flow.pages.length : 0
+          }
+        }));
+      } catch (error) {
+        // Ignore event dispatch issues and continue with paged output.
+      }
       if (existingAfter) {
         await existingAfter(flow);
       }
@@ -1380,6 +1392,14 @@ def generate_variant(
         body_classes=body_classes,
         source_html=source_html,
     )
+    manifest["ui_default_mode"] = "minimal"
+    manifest["template_hashes"] = {
+        "theme": hashlib.sha1(theme_css.encode("utf-8")).hexdigest()[:12],
+        "learning": hashlib.sha1(learning_js.encode("utf-8")).hexdigest()[:12],
+        "recommendation": hashlib.sha1(recommendation_js.encode("utf-8")).hexdigest()[:12],
+        "runtime": hashlib.sha1(runtime_js.encode("utf-8")).hexdigest()[:12],
+        "paged": hashlib.sha1(paged_js.encode("utf-8")).hexdigest()[:12],
+    }
     blocks_payload = build_blocks_payload(manifest=manifest, blocks=block_rows)
     manifest_features = manifest.get("features")
     sync_manifest_features_from_blocks(manifest_features, block_rows)

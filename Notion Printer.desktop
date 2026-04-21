@@ -3,9 +3,9 @@ Type=Application
 Version=1.0
 Name=Notion Printer
 Comment=Generate print-friendly HTML from a Notion export
-Exec=/home/robros0/Desktop/ws/notion_printer/notion_print_export_launcher.sh %f
+Exec=sh -c 'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; "$SCRIPT_DIR/notion_print_export_launcher.sh" "${1:-}"' %k %f
 Terminal=false
 MimeType=text/html;
 Categories=Utility;
-Icon=text-html
+Icon=printer
 StartupNotify=true

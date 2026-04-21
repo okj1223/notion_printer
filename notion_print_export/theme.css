@@ -140,6 +140,7 @@ body.print-ready .print-appendix-summary {
 	hr { margin:0.9rem 0 1rem; break-after: avoid-page; page-break-after: avoid; }
 	figure, .image, img { break-inside: avoid-page; page-break-inside: avoid; }
 	img { max-height:78vh; object-fit:contain; }
+	body.print-ready figure.image img { max-height:none !important; }
 	figcaption { break-before: avoid-page; page-break-before: avoid; }
 table, .simple-table, .collection-content { width:100% !important; table-layout:fixed; break-inside:avoid-page; page-break-inside:avoid; font-size:0.82rem; }
 .print-table-block { display:block; width:100%; }
@@ -632,6 +633,9 @@ body.print-ready figure.image {
 body.print-ready figure.image img {
 	max-width: 100% !important;
 	height: auto !important;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-user-drag: none;
 	display:block;
 	margin:0 auto;
 	border-radius: 10px;
@@ -641,6 +645,7 @@ body.print-ready figure.image img {
 body.print-ready figure.image.print-image-resized img {
 	width: calc(100% * var(--print-image-scale, 1)) !important;
 	max-width: calc(100% * var(--print-image-scale, 1)) !important;
+	height: auto !important;
 }
 
 body.print-ready table.simple-table {
@@ -1090,7 +1095,7 @@ body.print-ready.print-compact figure.image {
 }
 
 body.print-ready.print-compact figure.image img {
-	max-height: 58vh;
+	max-height: none;
 }
 
 body.print-ready.print-compact table.simple-table {
@@ -1194,9 +1199,9 @@ body.print-ready.print-compact .print-shortcut-block {
 		width: 100%;
 	}
 
-	body.print-ready.print-compact figure.image img {
-		max-height: 46vh;
-	}
+body.print-ready.print-compact figure.image img {
+	max-height: none;
+}
 
 	body.print-ready.print-compact table.simple-table {
 		font-size: 8.2pt;
