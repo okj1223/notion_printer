@@ -49,7 +49,18 @@
   - `generated_at`
   - `ui_default_mode`
   - `template_hashes`
-- UI 디버깅 시 기본 모드는 `minimal`로 보고, 전체 UI 확인이 필요하면 `?np_ui=full` 쿼리로 비교한다.
+- UI 디버깅은 실제 출력 경로를 기준으로 한다. 디버그 전용 정적 HTML을 따로 꾸미지 말고, 항상 `scripts/print_debug_factory.py`로 생성된 최신 결과를 본다.
+- 디버깅 기본 진입 순서:
+  - `python3 scripts/print_debug_factory.py --count 1`
+  - 생성된 `Last preview` URL 확인
+  - 그 URL에서 실제 화면 증상 재현
+- 화면이 “잠깐 바뀌었다가 원본처럼 돌아가는” 류의 이슈는 코드만 보지 말고 실제 브라우저 상태를 확인한다:
+  - Chrome headless 스크린샷을 로드 초반/지연 시점 두 번 캡처해 비교한다.
+  - 필요하면 CDP로 computed style, 부모 체인, 주입된 stylesheet를 직접 확인한다.
+  - print 전용 규칙이 screen으로 새는지 먼저 의심한다.
+  - 편집기 UI가 `.pagedjs_pages` 안으로 빨려 들어갔는지 확인한다.
+- 편집기 배너/패널/런처처럼 문서 바깥에 남아야 하는 UI는 `data-pagedjs-ignore="true"`를 유지한다.
+- UI 디버깅 시 현재 기본 모드는 `full`이다. 비교가 필요할 때만 `?np_ui=minimal` 또는 다른 모드 쿼리를 명시해서 본다.
 
 ## 응답 템플릿 (요청 시)
 - 증상 요약:

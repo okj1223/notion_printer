@@ -17,6 +17,7 @@ from notion_printer_learning import append_events_payload, write_document_manife
 
 
 STATE_FILE = Path("/tmp/notion_printer_preview_server.json")
+DEBUG_ALIAS_PATH = "/_notion_printer_debug.html"
 
 
 class NotionPrinterPreviewHandler(SimpleHTTPRequestHandler):
@@ -37,6 +38,18 @@ class NotionPrinterPreviewHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def serve_preview_html(self, *, head_only: bool = False) -> None:
+        if self.preview_html_file is None or not self.preview_html_file.exists():
+            self.send_error(404, "preview_html_not_found")
+            return
+        body = self.preview_html_file.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(body)
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -116,6 +129,20 @@ class NotionPrinterPreviewHandler(SimpleHTTPRequestHandler):
             return
         self.json_response(404, {"ok": False, "error": "not_found"})
 
+    def do_HEAD(self) -> None:
+        route = urlparse(self.path).path
+        if route == DEBUG_ALIAS_PATH:
+            self.serve_preview_html(head_only=True)
+            return
+        super().do_HEAD()
+
+    def do_GET(self) -> None:
+        route = urlparse(self.path).path
+        if route == DEBUG_ALIAS_PATH:
+            self.serve_preview_html()
+            return
+        super().do_GET()
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve a generated Notion Printer HTML over localhost.")
@@ -164,9 +191,14 @@ def stop_previous_server() -> None:
 
 
 def pick_port(preferred: int) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", preferred))
-        return sock.getsockname()[1]
+    for candidate in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", candidate))
+            except OSError:
+                continue
+            return sock.getsockname()[1]
+    raise OSError(f"Unable to bind preview server port near {preferred}")
 
 
 def open_browser(url: str) -> None:
@@ -191,8 +223,10 @@ def serve_html(html_file: Path, preferred_port: int, no_open: bool) -> int:
     save_state(os.getpid(), port, html_file)
 
     version_token = str(html_file.stat().st_mtime_ns)
-    url = f"http://127.0.0.1:{port}/{quote(html_file.name)}?np_open={version_token}"
+    url = f"http://127.0.0.1:{port}{DEBUG_ALIAS_PATH}?np_open={version_token}"
+    source_url = f"http://127.0.0.1:{port}/{quote(html_file.name)}?np_open={version_token}"
     print(f"Notion Printer preview: {url}")
+    print(f"Notion Printer source: {source_url}")
     if not no_open:
         open_browser(url)
 

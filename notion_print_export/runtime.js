@@ -37,12 +37,19 @@
   var editorList = null;
   var editorPageSelect = null;
   var editorBlockSelect = null;
+  var editorSearchInput = null;
+  var editorSearchMeta = null;
+  var editorSearchResults = null;
   var editorFontSelect = null;
   var editorSpacingSelect = null;
   var editorPanel = null;
   var editorLauncher = null;
   var editorPanelToggleButton = null;
   var editorBannerRecommendationButton = null;
+  var editorBannerTextEditToggle = null;
+  var editorBannerTitleNode = null;
+  var editorBannerSubtitleNode = null;
+  var editorBannerModeNode = null;
   var editorBannerSummary = null;
   var editorPanelSummary = null;
   var editorListMeta = null;
@@ -50,6 +57,7 @@
   var editorTextEditToggle = null;
   var editorFilterButtons = {};
   var editorUiState = { open: false, filter: 'all' };
+  var editorSearchQuery = '';
   var draggingCandidateId = null;
   var editorBanner = null;
   var editorUiBootstrapped = false;
@@ -61,14 +69,16 @@
   var pageSidebar = null;
   var pageSidebarList = null;
   var pageSidebarToggleButton = null;
-  var pageSidebarOpen = true;
+  var pageSidebarOpen = false;
   var pageSidebarSyncScheduled = false;
+  var pageSidebarForceSyncRequested = false;
   var pageSidebarActivePageNumber = '';
   var pageSidebarRefreshTimer = null;
   var pageSidebarEmptyAttemptCount = 0;
   var pagedReadyObserver = null;
   var pageSidebarHydrationTimer = null;
   var pageSidebarHydrationVersion = 0;
+  var pageSidebarStructureKey = '';
   var storageVersion = 'v8';
   var renderedDomHistory = [];
   var reloadFocusRestoreScheduled = false;
@@ -79,8 +89,8 @@
   var manifestVariantName = '';
   var manifestSourceHash = '';
   var manifestIsCompactVariant = false;
-  var manifestUiDefaultMode = 'minimal';
-  var uiMode = 'minimal';
+  var manifestUiDefaultMode = 'full';
+  var uiMode = 'full';
   var selectedTargetState = { kind: '', candidateId: '', persistId: '', pageNumber: 0 };
   var selectedImageIds = [];
   var imageResizeDragState = null;
@@ -90,6 +100,7 @@
   var listBreakRootCounter = 0;
   var queuedReloadNotice = '';
   var storedRenderedLayoutApplied = false;
+  var viewportInteractionLocked = false;
   var minimumImageScalePct = 5;
   var imageScaleStepPct = 0.1;
 
@@ -120,7 +131,7 @@
     manifestVariantName = typeof manifest.variant === 'string' ? manifest.variant : '';
     manifestSourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
     manifestIsCompactVariant = !!manifest.is_compact_variant;
-    manifestUiDefaultMode = /^(full|minimal)$/.test(String(manifest.ui_default_mode || '')) ? String(manifest.ui_default_mode) : 'minimal';
+    manifestUiDefaultMode = /^(full|minimal)$/.test(String(manifest.ui_default_mode || '')) ? String(manifest.ui_default_mode) : 'full';
     var generatedAt = typeof manifest.generated_at === 'string' ? manifest.generated_at : '';
     var outputName = typeof manifest.output_name === 'string' ? manifest.output_name : '';
     var sourceHash = typeof manifest.source_hash === 'string' ? manifest.source_hash : '';
@@ -137,16 +148,41 @@
     } catch (error) {
       // Ignore query parsing issues and continue with manifest defaults.
     }
-    return manifestUiDefaultMode || 'minimal';
+    return manifestUiDefaultMode || 'full';
   }
 
   function applyUiMode(mode) {
-    uiMode = /^(full|minimal)$/.test(String(mode || '')) ? String(mode) : 'minimal';
+    uiMode = /^(full|minimal)$/.test(String(mode || '')) ? String(mode) : 'full';
     if (document.body) {
       document.body.classList.toggle('print-ui-minimal', uiMode === 'minimal');
       document.body.classList.toggle('print-ui-full', uiMode === 'full');
     }
     pruneEditorBannerForMinimalMode();
+  }
+
+  function editorDocumentTitleText() {
+    var titleNode = document.querySelector('.page-title');
+    var text = titleNode ? String(titleNode.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    if (text) return text;
+    if (manifestOutputName) return manifestOutputName;
+    return 'Untitled document';
+  }
+
+  function editorVariantLabelText() {
+    var bits = [];
+    if (manifestIsCompactVariant) {
+      bits.push('COMPACT');
+    } else if (manifestVariantName) {
+      bits.push('PRINT');
+    }
+    if (/fast/i.test(String(manifestVariantName || ''))) {
+      bits.push('FAST');
+    } else if (document.querySelector('.pagedjs_pages')) {
+      bits.push('PAGED');
+    } else {
+      bits.push('FLOW');
+    }
+    return uniqueNonEmptyStrings(bits).join(' · ') || 'EDITOR';
   }
 
   function uniqueNonEmptyStrings(values) {
@@ -662,14 +698,14 @@
   function readStoredEditorUiState() {
     try {
       var stored = JSON.parse(localStorage.getItem(editorUiStorageKey()) || '{}') || {};
-      var defaultOpen = window.innerWidth >= 1480;
+      var defaultOpen = uiMode === 'full';
       return {
-        open: typeof stored.open === 'boolean' ? stored.open : defaultOpen,
+        open: defaultOpen,
         filter: sanitizeEditorFilter(stored.filter || 'all')
       };
     } catch (error) {
       return {
-        open: window.innerWidth >= 1480,
+        open: uiMode === 'full',
         filter: 'all'
       };
     }
@@ -708,6 +744,26 @@
     } catch (error) {
       // Ignore storage issues and continue.
     }
+  }
+
+  function hasReloadFocusNavigationToken() {
+    try {
+      return !!(new URL(window.location.href)).searchParams.get('np_reload');
+    } catch (error) {
+      return /(?:\?|&)np_reload=/.test(String(window.location.search || ''));
+    }
+  }
+
+  function currentViewportScrollTop() {
+    return Math.max(0, window.scrollY || window.pageYOffset || 0);
+  }
+
+  function lockViewportInteractionIfNeeded() {
+    if (viewportInteractionLocked) return true;
+    if (currentViewportScrollTop() > 24) {
+      viewportInteractionLocked = true;
+    }
+    return viewportInteractionLocked;
   }
 
   function readStoredAutoOptimize() {
@@ -886,10 +942,10 @@
   function candidateSuggestionBadgeText(recommendation) {
     if (!recommendation) return '';
     if (recommendation.break && recommendation.break.mode === 'force') {
-      return '새 페이지 추천';
+      return '새 페이지';
     }
     if (recommendation.gap && recommendation.gap.units > 0) {
-      return '빈칸 추천';
+      return '빈칸 +' + recommendation.gap.units;
     }
     return '';
   }
@@ -2566,7 +2622,7 @@
 
   function candidateAutoLabel(candidate) {
     var recommendation = candidateRecommendation(candidate);
-    if (!recommendation) return '자동 추천 없음';
+    if (!recommendation) return '추가 조정 없음';
     var parts = [];
     if (recommendation.break && recommendation.break.mode === 'force') {
       parts.push(recommendation.break.label);
@@ -2574,7 +2630,7 @@
     if (recommendation.gap && recommendation.gap.units > 0) {
       parts.push(recommendation.gap.label);
     }
-    return parts.length ? parts.join(', ') : '자동 추천 없음';
+    return parts.length ? parts.join(', ') : '추가 조정 없음';
   }
 
   function candidateManualLabel(candidate) {
@@ -2687,6 +2743,7 @@
     if (editorPageSelect && selectedTargetState.pageNumber) {
       editorPageSelect.value = String(selectedTargetState.pageNumber);
     }
+    renderEditorSearchResults();
     scheduleFigureToolStateRefresh();
   }
 
@@ -3071,6 +3128,10 @@
     if (!document.body || document.body.dataset.printReloadFocusRestored === 'true') return true;
     var pending = readStoredReloadFocus();
     if (!pending) return false;
+    if (!hasReloadFocusNavigationToken()) {
+      clearStoredReloadFocus();
+      return false;
+    }
     if (pending.at && Date.now() - pending.at > 120000) {
       clearStoredReloadFocus();
       return false;
@@ -3257,8 +3318,6 @@
     if (!pageNode) return '페이지';
     var meta = describeRenderedPage(pageNode);
     var labels = [String(meta.pageNumber || '?') + '페이지', meta.primaryLabel || '페이지'];
-    if (meta.continuedFromPrevious) labels.push('앞에서 이어짐');
-    if (meta.continuesToNext) labels.push('다음으로 이어짐');
     return labels.filter(Boolean).join(' · ');
   }
 
@@ -3297,6 +3356,12 @@
     pageSidebar = null;
     pageSidebarList = null;
     pageSidebarToggleButton = null;
+    pageSidebarStructureKey = '';
+    pageSidebarForceSyncRequested = false;
+    pageSidebarActivePageNumber = '';
+    if (document.body) {
+      document.body.classList.remove('print-page-sidebar-open');
+    }
   }
 
   function handlePagedRenderReady() {
@@ -3342,6 +3407,10 @@
     return normalizedRenderedPageNodes();
   }
 
+  function shouldRenderPageSidebar() {
+    return sidebarRenderedPageNodes().length > 1;
+  }
+
   function schedulePageSidebarRefresh(delay) {
     if (pageSidebarRefreshTimer) {
       clearTimeout(pageSidebarRefreshTimer);
@@ -3371,6 +3440,38 @@
     if (!bestPage) bestPage = pages[0];
     if (!bestPage) return '';
     return String(bestPage.getAttribute('data-page-number') || (pages.indexOf(bestPage) + 1));
+  }
+
+  function sidebarPageStructureSignature(pages) {
+    return (pages || []).map(function (pageNode, index) {
+      if (!pageNode || !pageNode.getAttribute) return String(index + 1);
+      return String(pageNode.getAttribute('data-page-number') || (index + 1));
+    }).join('|');
+  }
+
+  function renderedPageNodeByNumber(pageNumber) {
+    var targetPageNumber = String(pageNumber || '').trim();
+    if (!targetPageNumber) return null;
+    return sidebarRenderedPageNodes().find(function (pageNode, index) {
+      if (!pageNode || !pageNode.getAttribute) return false;
+      return String(pageNode.getAttribute('data-page-number') || (index + 1)) === targetPageNumber;
+    }) || null;
+  }
+
+  function scrollPageSidebarItemIntoView(item) {
+    if (!pageSidebarList || !item) return;
+    var padding = 12;
+    var itemTop = Math.max(0, item.offsetTop - padding);
+    var itemBottom = item.offsetTop + item.offsetHeight + padding;
+    var visibleTop = pageSidebarList.scrollTop;
+    var visibleBottom = visibleTop + pageSidebarList.clientHeight;
+    if (itemTop < visibleTop) {
+      pageSidebarList.scrollTop = itemTop;
+      return;
+    }
+    if (itemBottom > visibleBottom) {
+      pageSidebarList.scrollTop = Math.max(0, itemBottom - pageSidebarList.clientHeight);
+    }
   }
 
   function pageSidebarSummaryText(pageNode) {
@@ -3469,6 +3570,12 @@
 
   function buildPageSidebarPreviewContent(pageNode) {
     if (!pageNode || !pageNode.querySelector) return null;
+    var sourcePageBox = pageNode.querySelector('.pagedjs_pagebox');
+    if (sourcePageBox && sourcePageBox.cloneNode) {
+      var pageBoxClone = sourcePageBox.cloneNode(true);
+      pageBoxClone.classList.add('print-page-sidebar-preview-pagebox');
+      return sanitizePageSidebarPreview(pageBoxClone);
+    }
     var sourceArticle = pageNode.querySelector('article.page');
     if (!sourceArticle || !sourceArticle.cloneNode) {
       var fallbackRoot = renderedFlowRootForPage(pageNode);
@@ -3510,12 +3617,16 @@
     var metrics = sidebarPageMetrics(pageNode);
     var pageWidth = metrics.pageWidth;
     var pageHeight = metrics.pageHeight;
-    var viewportWidth = 148;
-    var viewportHeight = Math.max(196, Math.round(viewportWidth * (pageHeight / pageWidth)));
-    var scale = viewportWidth / pageWidth;
+    var viewportOuterWidth = 156;
+    var viewportFramePadding = 0;
+    var viewportInnerWidth = Math.max(96, viewportOuterWidth - (viewportFramePadding * 2));
+    var viewportScaleInsetPx = 0.8;
+    var scale = Math.max(0.05, (viewportInnerWidth - viewportScaleInsetPx) / pageWidth);
+    var viewportInnerHeight = Math.max(184, Math.ceil((pageHeight * scale) + viewportScaleInsetPx));
+    var viewportOuterHeight = viewportInnerHeight + (viewportFramePadding * 2);
 
-    thumb.style.height = viewportHeight + 'px';
-    viewport.style.height = viewportHeight + 'px';
+    thumb.style.height = viewportOuterHeight + 'px';
+    viewport.style.height = viewportOuterHeight + 'px';
     var sheet = document.createElement('span');
     sheet.className = 'print-page-sidebar-sheet';
     sheet.style.width = pageWidth + 'px';
@@ -3527,10 +3638,13 @@
     var preview = document.createElement('span');
     preview.className = 'print-page-sidebar-preview';
     preview.style.width = pageWidth + 'px';
+    preview.style.height = pageHeight + 'px';
     preview.style.minHeight = pageHeight + 'px';
 
     var clone = buildPageSidebarPreviewContent(pageNode);
     if (!clone) throw new Error('page sidebar preview content unavailable');
+    clone.style.width = pageWidth + 'px';
+    clone.style.height = pageHeight + 'px';
     preview.appendChild(clone);
     sheet.appendChild(preview);
     return thumb;
@@ -3552,6 +3666,11 @@
     return thumb;
   }
 
+  function pageSidebarItemHasHydratedThumbnail(item) {
+    if (!item || !item.querySelector) return false;
+    return !!item.querySelector('.print-page-sidebar-thumb .print-page-sidebar-preview');
+  }
+
   function schedulePageSidebarHydration(pages) {
     pageSidebarHydrationVersion += 1;
     if (pageSidebarHydrationTimer) {
@@ -3568,6 +3687,7 @@
         var pageNumber = String(pageNode.getAttribute('data-page-number') || (index + 1));
         var item = pageSidebarList.querySelector('.print-page-sidebar-item[data-page-number="' + pageNumber + '"]');
         if (!item) return;
+        if (pageSidebarItemHasHydratedThumbnail(item)) return;
         var thumb = null;
         try {
           thumb = buildPageSidebarThumbnail(pageNode, pageNumber);
@@ -3606,6 +3726,17 @@
       pageSidebarToggleButton.type = 'button';
       pageSidebarToggleButton.className = 'print-page-sidebar-toggle';
       pageSidebarToggleButton.setAttribute('data-pagedjs-ignore', 'true');
+      pageSidebarToggleButton.setAttribute('aria-label', '페이지 패널 열기');
+      pageSidebarToggleButton.setAttribute('title', '페이지 패널 열기');
+      pageSidebarToggleButton.setAttribute('data-sidebar-label', '페이지 패널 열기');
+      var toggleHandle = document.createElement('span');
+      toggleHandle.className = 'print-page-sidebar-toggle-handle';
+      for (var chevronIndex = 0; chevronIndex < 2; chevronIndex += 1) {
+        var toggleChevron = document.createElement('span');
+        toggleChevron.className = 'print-page-sidebar-toggle-chevron';
+        toggleHandle.appendChild(toggleChevron);
+      }
+      pageSidebarToggleButton.appendChild(toggleHandle);
       pageSidebarToggleButton.addEventListener('click', function () {
         setPageSidebarOpen(!pageSidebarOpen);
       });
@@ -3642,49 +3773,61 @@
   }
 
   function setPageSidebarOpen(nextOpen) {
+    var wasOpen = !!pageSidebarOpen;
     pageSidebarOpen = !!nextOpen;
     if (document.body) {
       document.body.classList.toggle('print-page-sidebar-open', pageSidebarOpen);
     }
     if (pageSidebarToggleButton) {
-      pageSidebarToggleButton.textContent = pageSidebarOpen ? '페이지 목록 숨기기' : '페이지 목록';
+      var toggleLabel = pageSidebarOpen ? '페이지 패널 닫기' : '페이지 패널 열기';
+      pageSidebarToggleButton.setAttribute('aria-label', toggleLabel);
+      pageSidebarToggleButton.setAttribute('title', toggleLabel);
+      pageSidebarToggleButton.setAttribute('data-sidebar-label', toggleLabel);
       pageSidebarToggleButton.setAttribute('aria-expanded', pageSidebarOpen ? 'true' : 'false');
+    }
+    if (pageSidebarOpen && !wasOpen) {
+      schedulePageSidebarSync(true);
     }
   }
 
   function pruneEditorBannerForMinimalMode() {
     if (!editorBanner) return;
     Array.from(editorBanner.querySelectorAll('button')).forEach(function (button) {
-      var label = String(button.textContent || '').replace(/\s+/g, ' ').trim();
       var role = String(button.getAttribute('data-editor-role') || '').trim();
-      var shouldHide = uiMode === 'minimal' && (role === 'panel-toggle' || /자동\s*정리|문제\s*없음|추천|수동\s*조정|이미지\s*추천|블록\s*조정|조정\s*닫기/.test(label));
+      var shouldHide = uiMode === 'minimal' && (role === 'undo' || role === 'reset');
       button.style.display = shouldHide ? 'none' : '';
     });
     var summary = editorBanner.querySelector('.print-editor-banner-summary');
-    if (summary) summary.style.display = uiMode === 'minimal' ? 'none' : '';
+    if (summary) summary.style.display = '';
     var status = editorBanner.querySelector('.print-editor-banner-status');
-    if (status) status.style.display = uiMode === 'minimal' ? 'none' : '';
+    if (status) status.style.display = '';
   }
 
-  function syncPageSidebarActiveState() {
+  function syncPageSidebarActiveState(followActive) {
     if (!pageSidebarList) return;
     var currentPageNumber = currentViewportPageNumber();
-    pageSidebarActivePageNumber = currentPageNumber;
+    var previousPageNumber = pageSidebarActivePageNumber;
+    var activeButton = null;
     Array.from(pageSidebarList.querySelectorAll('.print-page-sidebar-item')).forEach(function (button) {
       var isActive = currentPageNumber && button.getAttribute('data-page-number') === currentPageNumber;
       button.classList.toggle('is-active', !!isActive);
-      if (isActive && pageSidebarOpen && button.scrollIntoView) {
-        button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
+      if (isActive) activeButton = button;
     });
+    pageSidebarActivePageNumber = currentPageNumber;
+    if (((followActive) || (currentPageNumber && currentPageNumber !== previousPageNumber)) && activeButton && pageSidebarOpen) {
+      scrollPageSidebarItemIntoView(activeButton);
+    }
   }
 
-  function schedulePageSidebarSync() {
+  function schedulePageSidebarSync(followActive) {
+    if (followActive) pageSidebarForceSyncRequested = true;
     if (pageSidebarSyncScheduled) return;
     pageSidebarSyncScheduled = true;
     var run = function () {
+      var shouldFollow = pageSidebarForceSyncRequested;
+      pageSidebarForceSyncRequested = false;
       pageSidebarSyncScheduled = false;
-      syncPageSidebarActiveState();
+      syncPageSidebarActiveState(shouldFollow);
     };
     if (window.requestAnimationFrame) {
       window.requestAnimationFrame(run);
@@ -3694,86 +3837,70 @@
   }
 
   function refreshPageSidebar() {
+    if (!shouldRenderPageSidebar()) {
+      resetPageSidebarDom();
+      return;
+    }
     ensurePageSidebar();
     if (!pageSidebarList) return;
     var pages = sidebarRenderedPageNodes();
-    pageSidebarList.innerHTML = '';
     if (!pages.length) {
+      pageSidebarList.innerHTML = '';
+      pageSidebarStructureKey = '';
       pageSidebarEmptyAttemptCount += 1;
       schedulePageSidebarRefresh(pagedRenderReady() ? 900 : 260);
       return;
     }
     pageSidebarEmptyAttemptCount = 0;
-    pages.forEach(function (pageNode, index) {
-      var pageNumber = String(pageNode.getAttribute('data-page-number') || (index + 1));
-      if (!pageNumber) return;
+    var structureKey = sidebarPageStructureSignature(pages);
+    var needsRebuild = pageSidebarStructureKey !== structureKey || pageSidebarList.children.length !== pages.length;
+    if (needsRebuild) {
+      pageSidebarList.innerHTML = '';
+      pages.forEach(function (pageNode, index) {
+        var pageNumber = String(pageNode.getAttribute('data-page-number') || (index + 1));
+        if (!pageNumber) return;
 
-      var item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'print-page-sidebar-item';
-      item.setAttribute('data-page-number', pageNumber);
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'print-page-sidebar-item';
+        item.setAttribute('data-page-number', pageNumber);
 
-      var thumb = buildPageSidebarFallbackThumbnail();
-      item.appendChild(thumb);
+        var thumb = buildPageSidebarFallbackThumbnail();
+        item.appendChild(thumb);
 
-      var numberLabel = document.createElement('span');
-      numberLabel.className = 'print-page-sidebar-number';
-      numberLabel.textContent = pageNumber;
-      item.appendChild(numberLabel);
-      item.setAttribute('aria-label', '페이지 ' + pageNumber);
-      item.addEventListener('click', function () {
-        pageNode.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-        pageSidebarActivePageNumber = pageNumber;
-        schedulePageSidebarSync();
+        var numberLabel = document.createElement('span');
+        numberLabel.className = 'print-page-sidebar-number';
+        numberLabel.textContent = pageNumber;
+        item.appendChild(numberLabel);
+        item.setAttribute('aria-label', '페이지 ' + pageNumber);
+        item.addEventListener('click', function () {
+          var livePageNode = renderedPageNodeByNumber(pageNumber);
+          if (livePageNode && livePageNode.scrollIntoView) {
+            livePageNode.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+          }
+          pageSidebarActivePageNumber = pageNumber;
+          schedulePageSidebarSync(true);
+        });
+        pageSidebarList.appendChild(item);
       });
-      pageSidebarList.appendChild(item);
-    });
+      pageSidebarStructureKey = structureKey;
+    }
     if (!pageSidebarList.children.length && pageSidebarEmptyAttemptCount < 12) {
       schedulePageSidebarRefresh(260);
       return;
     }
-    schedulePageSidebarHydration(pages);
+    var needsHydration = needsRebuild || Array.from(pageSidebarList.querySelectorAll('.print-page-sidebar-item')).some(function (item) {
+      return !pageSidebarItemHasHydratedThumbnail(item);
+    });
+    if (needsHydration) {
+      schedulePageSidebarHydration(pages);
+    }
     schedulePageSidebarSync();
   }
 
   function refreshNavigatorOptions() {
     pruneEditorBannerForMinimalMode();
-    if (editorBlockSelect) {
-      var previousBlockValue = editorBlockSelect.value;
-      editorBlockSelect.innerHTML = '';
-      activeBreakCandidates().forEach(function (candidate) {
-        var option = document.createElement('option');
-        option.value = candidate.id;
-        var prefix = '[블록] ';
-        if (candidate.kind === 'section') prefix = '[섹션] ';
-        else if (candidate.kind === 'major') prefix = '[상위 항목] ';
-        option.textContent = prefix + candidate.label;
-        editorBlockSelect.appendChild(option);
-      });
-      if (previousBlockValue) {
-        editorBlockSelect.value = previousBlockValue;
-      }
-      if (selectedTargetState.candidateId) {
-        editorBlockSelect.value = selectedTargetState.candidateId;
-      }
-    }
-
-    if (editorPageSelect) {
-      var previousPageValue = editorPageSelect.value;
-      editorPageSelect.innerHTML = '';
-      Array.from(document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]')).forEach(function (pageNode) {
-        var option = document.createElement('option');
-        option.value = pageNode.getAttribute('data-page-number') || '';
-        option.textContent = pageLabelText(pageNode);
-        editorPageSelect.appendChild(option);
-      });
-      if (previousPageValue) {
-        editorPageSelect.value = previousPageValue;
-      }
-      if (selectedTargetState.pageNumber) {
-        editorPageSelect.value = String(selectedTargetState.pageNumber);
-      }
-    }
+    renderEditorSearchResults();
     refreshPageSidebar();
     updateEditorUiSummary();
   }
@@ -3902,9 +4029,9 @@
     if (plan.gaps.length) parts.push('빈칸 ' + plan.gaps.length + '개');
     if (plan.images.length) parts.push('이미지 ' + plan.images.length + '개');
     if (!parts.length) {
-      return '자동 정리 ' + passIndex + '/' + maxPasses + '회차: 더 적용할 추천이 없습니다';
+      return '레이아웃 계산 ' + passIndex + '/' + maxPasses + '회차: 추가 반영 항목이 없습니다';
     }
-    return '자동 정리 ' + passIndex + '/' + maxPasses + '회차: ' + parts.join(', ') + ' 적용';
+    return '레이아웃 계산 ' + passIndex + '/' + maxPasses + '회차: ' + parts.join(', ') + ' 반영';
   }
 
   function runAutoOptimizePass(options) {
@@ -3918,7 +4045,7 @@
     if (!totalActions) {
       clearStoredAutoOptimize();
       updateEditorUiSummary();
-      updateEditorBannerStatus('자동 정리 완료: 더 적용할 추천이 없습니다');
+      updateEditorBannerStatus('레이아웃 계산 완료: 추가 반영 항목이 없습니다');
       return false;
     }
 
@@ -4011,16 +4138,16 @@
 
   function startAutoOptimize(uiSource) {
     clearStoredAutoOptimize();
-    runAutoOptimizePass({
-      passIndex: 1,
-      maxPasses: 3,
-      uiSource: uiSource || 'auto_optimize_button'
-    });
+    updateEditorBannerStatus('이 기능은 현재 화면에서 숨겨져 있습니다');
   }
 
   function restorePendingAutoOptimize() {
     var pending = readStoredAutoOptimize();
     if (!pending) return false;
+    if (!hasReloadFocusNavigationToken()) {
+      clearStoredAutoOptimize();
+      return false;
+    }
     if (pending.at && Date.now() - pending.at > 120000) {
       clearStoredAutoOptimize();
       return false;
@@ -4028,7 +4155,7 @@
     if (pending.mode === 'complete') {
       clearStoredAutoOptimize();
       updateEditorUiSummary();
-      updateEditorBannerStatus(pending.message || '자동 정리 완료');
+      updateEditorBannerStatus(pending.message || '레이아웃 계산 완료');
       return true;
     }
     if (pending.mode !== 'continue') {
@@ -4045,19 +4172,8 @@
   }
 
   function scheduleAutoOptimizeResume() {
-    if (autoOptimizeResumeScheduled) return;
-    autoOptimizeResumeScheduled = true;
-    [140, 420, 1200].forEach(function (delay, index, delays) {
-      setTimeout(function () {
-        if (restorePendingAutoOptimize()) {
-          autoOptimizeResumeScheduled = false;
-          return;
-        }
-        if (index === delays.length - 1) {
-          autoOptimizeResumeScheduled = false;
-        }
-      }, delay);
-    });
+    clearStoredAutoOptimize();
+    autoOptimizeResumeScheduled = false;
   }
 
   function renderedCandidateLookup() {
@@ -4158,8 +4274,9 @@
 
   function buildEditorMetrics() {
     var candidates = activeBreakCandidates();
+    var renderedPageCount = document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length;
     return {
-      pageCount: document.querySelectorAll('.pagedjs_pages .pagedjs_page[data-page-number]').length,
+      pageCount: renderedPageCount || (document.querySelector('article.page') ? 1 : 0),
       candidateCount: candidates.length,
       outstandingRecommendationCount: candidates.filter(candidateHasOutstandingRecommendation).length,
       recommendedCandidateCount: candidates.filter(candidateHasAnyRecommendation).length,
@@ -4176,9 +4293,9 @@
     host.innerHTML = '';
     [
       { label: '페이지', value: metrics.pageCount },
-      { label: '추천 블록', value: metrics.outstandingRecommendationCount },
-      { label: '수동 조정', value: metrics.manualCandidateCount },
-      { label: '이미지 추천', value: metrics.imageRecommendationCount }
+      { label: '텍스트 수정', value: metrics.textEditCount },
+      { label: '이미지 조정', value: metrics.imageEditCount },
+      { label: '삭제됨', value: metrics.deletedCount }
     ].forEach(function (metric) {
       var chip = document.createElement('div');
       chip.className = 'print-editor-summary-chip';
@@ -4201,19 +4318,36 @@
     renderSummaryChips(editorPanelSummary, metrics);
 
     if (editorNote) {
-      if (metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0) {
-        editorNote.textContent = '1. 자동 정리 2. 문제 위치로 이동 3. 남은 곳만 수정하세요. 현재 추천 블록 ' + metrics.outstandingRecommendationCount + '개, 이미지 추천 ' + metrics.imageRecommendationCount + '개가 남아 있습니다.';
-      } else if (metrics.manualCandidateCount > 0 || metrics.imageEditCount > 0 || metrics.textEditCount > 0 || metrics.deletedCount > 0) {
-        editorNote.textContent = '수동 조정이 반영된 상태입니다. 블록마다 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 다듬을 수 있습니다.';
+      var visibleEditCount =
+        metrics.textEditCount +
+        metrics.imageEditCount +
+        metrics.deletedCount +
+        Object.keys(breakOverrideMap || {}).length +
+        Object.keys(spaceOverrideMap || {}).length +
+        Object.keys(pullUpOverrideMap || {}).length +
+        Object.keys(manualGapMap || {}).length;
+      if (visibleEditCount > 0) {
+        editorNote.textContent = '직접 편집 ' + visibleEditCount + '건이 반영되었습니다. 본문 위에서 바로 이어 붙이기, 여기서 시작, 빈칸 조정을 계속 할 수 있습니다.';
       } else {
-        editorNote.textContent = '자동 정리는 초안입니다. 실제 마감은 블록을 눌러 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 맞추세요.';
+        editorNote.textContent = '문서 본문은 원본 스타일을 유지하고, 편집기에서는 페이지 분할과 요소 배치만 조정합니다.';
       }
     }
 
     if (editorBannerRecommendationButton) {
-      var hasRecommendation = metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0;
-      editorBannerRecommendationButton.disabled = !hasRecommendation;
-      editorBannerRecommendationButton.textContent = hasRecommendation ? '2. 문제 위치' : '문제 없음';
+      editorBannerRecommendationButton.disabled = true;
+      editorBannerRecommendationButton.style.display = 'none';
+    }
+  }
+
+  function syncEditorBannerContext() {
+    if (editorBannerTitleNode) {
+      editorBannerTitleNode.textContent = editorDocumentTitleText();
+    }
+    if (editorBannerSubtitleNode) {
+      editorBannerSubtitleNode.textContent = '원본 문서 스타일 유지 · 편집 워크스페이스';
+    }
+    if (editorBannerModeNode) {
+      editorBannerModeNode.textContent = editorVariantLabelText();
     }
   }
 
@@ -4226,11 +4360,12 @@
     }
 
     if (editorLauncher) {
-      editorLauncher.textContent = isOpen ? '조정 닫기 (E)' : '블록 조정 (E)';
+      editorLauncher.textContent = isOpen ? '도구 닫기 (E)' : '도구 패널 (E)';
     }
 
     if (editorPanelToggleButton) {
-      editorPanelToggleButton.textContent = isOpen ? '조정 닫기' : '3. 블록 조정';
+      editorPanelToggleButton.textContent = isOpen ? '패널 닫기' : '도구 패널';
+      editorPanelToggleButton.classList.toggle('is-active', isOpen);
     }
 
     if (editorPanel) {
@@ -4246,9 +4381,16 @@
     }
 
     if (editorTextEditToggle) {
-      editorTextEditToggle.textContent = textEditModeEnabled ? '텍스트 수정 종료' : '텍스트 수정';
+      editorTextEditToggle.textContent = textEditModeEnabled ? '텍스트 모드 종료' : '텍스트 수정';
       editorTextEditToggle.classList.toggle('is-active', textEditModeEnabled);
     }
+
+    if (editorBannerTextEditToggle) {
+      editorBannerTextEditToggle.textContent = textEditModeEnabled ? '텍스트 모드 종료' : '텍스트 수정';
+      editorBannerTextEditToggle.classList.toggle('is-active', textEditModeEnabled);
+    }
+
+    syncEditorBannerContext();
 
     Object.keys(editorFilterButtons).forEach(function (key) {
       if (!editorFilterButtons[key]) return;
@@ -4256,14 +4398,15 @@
     });
   }
 
+  function toggleTextEditMode() {
+    var nextEnabled = !textEditModeEnabled;
+    setTextEditMode(nextEnabled);
+    updateEditorBannerStatus(nextEnabled ? '텍스트 전용 편집 모드를 시작했습니다' : '텍스트 수정 모드를 종료했습니다');
+    return nextEnabled;
+  }
+
   function setEditorPanelOpen(open) {
     editorUiState.open = !!open;
-    if (editorUiState.open && sanitizeEditorFilter(editorUiState.filter || 'all') === 'all') {
-      var metrics = buildEditorMetrics();
-      if (metrics.outstandingRecommendationCount > 0 || metrics.imageRecommendationCount > 0) {
-        editorUiState.filter = 'recommended';
-      }
-    }
     writeStoredEditorUiState();
     syncEditorUiControls();
     refreshEditorList();
@@ -4324,32 +4467,211 @@
     updateEditorBannerStatus('선택한 블록으로 이동했습니다');
   }
 
-  function jumpToRecommendedItem() {
-    var candidates = sortedEditorCandidates().filter(candidateHasOutstandingRecommendation);
-    if (candidates.length) {
-      setEditorPanelOpen(true);
-      setEditorFilterMode('recommended');
-      jumpToCandidate(candidates[0]);
-      updateEditorBannerStatus('추천 블록으로 이동했습니다');
+  function normalizeSearchTextContent(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function candidateSearchPlainText(candidate) {
+    if (!candidate) return '';
+    var node = candidate.node;
+    var text = node ? normalizeSearchTextContent(node.innerText || node.textContent || '') : '';
+    if (!text || text === '이미지') {
+      text = normalizeSearchTextContent(candidate.label || '');
+    }
+    return text;
+  }
+
+  function searchPageNumberForCandidate(candidate) {
+    if (!candidate) return 0;
+    var pageNumber = pageNumberForRenderedCandidate(candidate.id) || pageNumberFromNode(closestRenderedPageNode(candidate.node));
+    if (!pageNumber && candidate.node && candidate.node.closest && candidate.node.closest('article.page')) {
+      return 1;
+    }
+    return pageNumber;
+  }
+
+  function searchPageLabelForCandidate(candidate) {
+    var pageNumber = searchPageNumberForCandidate(candidate);
+    return pageNumber > 0 ? String(pageNumber) + '페이지' : '본문';
+  }
+
+  function editorSearchContextText(candidates, index) {
+    var current = candidates[index];
+    if (!current) return '';
+    var currentPageNumber = searchPageNumberForCandidate(current);
+    var parts = [];
+    [index - 1, index, index + 1].forEach(function (candidateIndex) {
+      var candidate = candidates[candidateIndex];
+      if (!candidate) return;
+      var pageNumber = searchPageNumberForCandidate(candidate);
+      if (currentPageNumber && pageNumber && currentPageNumber !== pageNumber) return;
+      var text = candidateSearchPlainText(candidate);
+      if (!text) return;
+      parts.push(text);
+    });
+    return normalizeSearchTextContent(parts.join(' / '));
+  }
+
+  function searchExcerptForQuery(text, query) {
+    var source = normalizeSearchTextContent(text);
+    var keyword = normalizeSearchTextContent(query);
+    if (!source) return '';
+    if (!keyword) {
+      return source.length > 132 ? source.slice(0, 132).trim() + '…' : source;
+    }
+    var lowerSource = source.toLowerCase();
+    var lowerKeyword = keyword.toLowerCase();
+    var matchIndex = lowerSource.indexOf(lowerKeyword);
+    if (matchIndex === -1) {
+      return source.length > 132 ? source.slice(0, 132).trim() + '…' : source;
+    }
+    var start = Math.max(0, matchIndex - 40);
+    var end = Math.min(source.length, matchIndex + keyword.length + 68);
+    var prefix = start > 0 ? '…' : '';
+    var suffix = end < source.length ? '…' : '';
+    return prefix + source.slice(start, end).trim() + suffix;
+  }
+
+  function appendHighlightedSearchSnippet(host, text, query) {
+    if (!host) return;
+    var source = String(text || '');
+    var keyword = normalizeSearchTextContent(query);
+    if (!keyword) {
+      host.textContent = source;
+      return;
+    }
+    var lowerSource = source.toLowerCase();
+    var lowerKeyword = keyword.toLowerCase();
+    var matchIndex = lowerSource.indexOf(lowerKeyword);
+    if (matchIndex === -1) {
+      host.textContent = source;
+      return;
+    }
+    if (matchIndex > 0) {
+      host.appendChild(document.createTextNode(source.slice(0, matchIndex)));
+    }
+    var mark = document.createElement('mark');
+    mark.textContent = source.slice(matchIndex, matchIndex + keyword.length);
+    host.appendChild(mark);
+    if (matchIndex + keyword.length < source.length) {
+      host.appendChild(document.createTextNode(source.slice(matchIndex + keyword.length)));
+    }
+  }
+
+  function collectEditorSearchResults(query) {
+    var keyword = normalizeSearchTextContent(query);
+    if (!keyword) return [];
+    var lowerKeyword = keyword.toLowerCase();
+    var candidates = activeBreakCandidates();
+    var results = [];
+    candidates.forEach(function (candidate, index) {
+      var directText = candidateSearchPlainText(candidate);
+      if (!directText) return;
+      var directMatch = directText.toLowerCase().indexOf(lowerKeyword);
+      var contextText = editorSearchContextText(candidates, index) || directText;
+      var contextMatch = contextText.toLowerCase().indexOf(lowerKeyword);
+      if (directMatch === -1 && contextMatch === -1) return;
+      results.push({
+        candidateId: candidate.id,
+        pageLabel: searchPageLabelForCandidate(candidate),
+        pageNumber: searchPageNumberForCandidate(candidate),
+        plainText: directText,
+        excerpt: searchExcerptForQuery(contextText, keyword),
+        rank: contextMatch === -1 ? directMatch : contextMatch,
+        index: index
+      });
+    });
+    return results.slice(0, 40);
+  }
+
+  function renderEditorSearchResults() {
+    if (!editorSearchResults) return;
+    var query = normalizeSearchTextContent(editorSearchInput ? editorSearchInput.value : editorSearchQuery);
+    editorSearchQuery = query;
+    editorSearchResults.innerHTML = '';
+    if (editorSearchMeta) {
+      editorSearchMeta.textContent = '';
+    }
+
+    var empty = document.createElement('div');
+    empty.className = 'print-editor-empty';
+
+    if (!query) {
+      empty.textContent = '단어를 입력하면 해당 문장이 있는 위치와 앞뒤 문맥을 바로 보여줍니다.';
+      editorSearchResults.appendChild(empty);
+      if (editorSearchMeta) {
+        editorSearchMeta.textContent = '본문 단어 검색';
+      }
       return;
     }
 
-    var recommendedFigureId = distinctRenderedFigureIds().find(function (figureId) {
-      var recommendation = figureRecommendation(figureId);
-      return !!(recommendation && recommendation.targetScalePct < currentStoredImageScale(figureId) - 2);
-    }) || '';
-
-    if (recommendedFigureId) {
-      var figure = persistedNodeById(recommendedFigureId);
-      if (figure) {
-        setEditorPanelOpen(true);
-        highlightAndScrollToNode(figure);
-        updateEditorBannerStatus('이미지 추천 위치로 이동했습니다');
-        return;
+    var results = collectEditorSearchResults(query);
+    if (!results.length) {
+      empty.textContent = '"' + query + '"와 일치하는 문장을 찾지 못했습니다.';
+      editorSearchResults.appendChild(empty);
+      if (editorSearchMeta) {
+        editorSearchMeta.textContent = '검색 결과 없음';
       }
+      return;
     }
 
-    updateEditorBannerStatus('현재 추천할 항목이 없습니다');
+    if (editorSearchMeta) {
+      editorSearchMeta.textContent = String(results.length) + '개 결과 · 클릭하면 해당 위치로 이동합니다';
+    }
+
+    results.forEach(function (result) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'print-editor-search-result';
+      if (selectedTargetState.candidateId && selectedTargetState.candidateId === result.candidateId) {
+        button.classList.add('is-selected');
+      }
+
+      var page = document.createElement('span');
+      page.className = 'print-editor-search-result-page';
+      page.textContent = result.pageLabel;
+      button.appendChild(page);
+
+      var snippet = document.createElement('span');
+      snippet.className = 'print-editor-search-result-snippet';
+      appendHighlightedSearchSnippet(snippet, result.excerpt, query);
+      button.appendChild(snippet);
+
+      button.addEventListener('click', function () {
+        var candidate = findCandidateById(result.candidateId);
+        if (!candidate) {
+          updateEditorBannerStatus('검색 결과에 해당하는 블록을 찾지 못했습니다');
+          return;
+        }
+        jumpToCandidate(candidate);
+        updateEditorBannerStatus('"' + query + '" 검색 결과로 이동했습니다');
+        renderEditorSearchResults();
+      });
+
+      editorSearchResults.appendChild(button);
+    });
+  }
+
+  function jumpToFirstSearchResult() {
+    var query = normalizeSearchTextContent(editorSearchInput ? editorSearchInput.value : editorSearchQuery);
+    var results = collectEditorSearchResults(query);
+    if (!results.length) {
+      updateEditorBannerStatus('먼저 찾을 단어를 입력해 주세요');
+      return false;
+    }
+    var candidate = findCandidateById(results[0].candidateId);
+    if (!candidate) {
+      updateEditorBannerStatus('검색 결과에 해당하는 블록을 찾지 못했습니다');
+      return false;
+    }
+    jumpToCandidate(candidate);
+    updateEditorBannerStatus('첫 번째 검색 결과로 이동했습니다');
+    renderEditorSearchResults();
+    return true;
+  }
+
+  function jumpToRecommendedItem() {
+    updateEditorBannerStatus('이 이동 기능은 현재 비활성화되어 있습니다');
   }
 
   function findEditableWithinNode(node) {
@@ -4368,6 +4690,18 @@
 
   function setTextEditMode(enabled) {
     textEditModeEnabled = !!enabled;
+    if (textEditModeEnabled) {
+      closeImageToolPanels();
+      clearDragInteractionState();
+      setImageSelectionIds([]);
+      clearSelectedTarget({ silent: true });
+      setPageSidebarOpen(false);
+      if (editorUiState.open) {
+        setEditorPanelOpen(false);
+      }
+    } else {
+      closeImageToolPanels();
+    }
     document.body.classList.toggle('print-text-edit-mode', textEditModeEnabled);
     Array.from(document.querySelectorAll('[data-print-edit-id]')).forEach(function (node) {
       if (textEditModeEnabled) {
@@ -4385,6 +4719,7 @@
         }
       } else {
         node.removeAttribute('contenteditable');
+        node.removeAttribute('spellcheck');
       }
     });
     syncEditorUiControls();
@@ -4577,6 +4912,10 @@
 
   function restoreStoredRenderedLayoutOnce() {
     if (storedRenderedLayoutApplied) return false;
+    if (lockViewportInteractionIfNeeded()) {
+      storedRenderedLayoutApplied = true;
+      return false;
+    }
     if (hasPersistedEditState()) {
       storedRenderedLayoutApplied = true;
       return false;
@@ -4771,8 +5110,6 @@
       return sharedWithPrevious.indexOf(persistId) === -1 && sharedWithNext.indexOf(persistId) === -1;
     });
     var continuationBadges = [];
-    if (continuedFromPrevious) continuationBadges.push('앞 페이지에서 이어짐');
-    if (continuesToNext) continuationBadges.push('다음 페이지로 이어짐');
 
     var mergeCandidateId = mergeableCandidateId || (!continuedFromPrevious ? firstCandidateId : '');
     var canMerge = !!mergeCandidateId && parseInt(pageNode.getAttribute('data-page-number') || '0', 10) > 1;
@@ -5961,6 +6298,7 @@
       if (!pageNode.dataset.printPageSelectionBound) {
         pageNode.dataset.printPageSelectionBound = 'true';
         pageNode.addEventListener('click', function (event) {
+          if (textEditModeEnabled) return;
           if (isInteractiveCanvasTarget(event.target)) return;
           if (event.target && event.target.closest && event.target.closest('[data-print-break-id], figure.image[data-print-persist-id]')) return;
           var liveMeta = describeRenderedPage(pageNode);
@@ -5975,8 +6313,6 @@
     Array.from(pagesRoot.querySelectorAll('[data-print-break-id]')).forEach(function (node) {
       node.classList.add('print-draggable-candidate');
       var candidateId = node.getAttribute('data-print-break-id') || '';
-      var candidate = findCandidateById(candidateId);
-      var recommendation = candidate ? candidateRecommendation(candidate) : null;
 
       if (!directChildByClass(node, 'print-insert-actions')) {
         var insertBar = document.createElement('span');
@@ -6004,10 +6340,6 @@
         splitButton.className = 'print-insert-action-button';
         splitButton.textContent = '여기서 시작';
         splitButton.title = '이 블록부터 새 페이지 시작';
-        if (recommendation && recommendation.break && recommendation.break.mode === 'force') {
-          splitButton.classList.add('is-suggested');
-          splitButton.title = recommendation.break.label + ' - ' + (joinRecommendationReasons(recommendation.break) || '새 페이지 시작 추천');
-        }
         splitButton.addEventListener('click', function () {
           splitRenderedPageAtNode(node);
         });
@@ -6018,24 +6350,12 @@
         gapButton.className = 'print-insert-action-button';
         gapButton.textContent = '빈칸 +';
         gapButton.title = '엔터 한 번 정도의 빈공간 추가';
-        if (recommendation && recommendation.gap && recommendation.gap.units > 0) {
-          gapButton.classList.add('is-suggested');
-          gapButton.title = recommendation.gap.label + ' - ' + (joinRecommendationReasons(recommendation.gap) || '간격 추가 추천');
-        }
         gapButton.addEventListener('click', function () {
           var candidate = findCandidateById(candidateId);
           if (!candidate) return;
           adjustCandidateGap(candidate, 1, 'inline_gap_button');
         });
         insertBar.appendChild(gapButton);
-
-        var suggestionBadgeText = candidateSuggestionBadgeText(recommendation);
-        if (suggestionBadgeText) {
-          var insertBadge = document.createElement('span');
-          insertBadge.className = 'print-inline-suggestion-badge';
-          insertBadge.textContent = suggestionBadgeText;
-          insertBar.appendChild(insertBadge);
-        }
 
         node.appendChild(insertBar);
       }
@@ -6047,7 +6367,7 @@
         var inlineDelete = document.createElement('button');
         inlineDelete.type = 'button';
         inlineDelete.className = 'print-inline-tool is-danger';
-        inlineDelete.textContent = 'X';
+        inlineDelete.textContent = '삭제';
         inlineDelete.title = '이 블록 삭제';
         inlineDelete.addEventListener('click', function (event) {
           event.preventDefault();
@@ -6065,6 +6385,7 @@
       if (!node.dataset.printSelectionBound) {
         node.dataset.printSelectionBound = 'true';
         node.addEventListener('click', function (event) {
+          if (textEditModeEnabled) return;
           if (isInteractiveCanvasTarget(event.target)) return;
           var targetSelection = selectionForNode(node);
           if (!targetSelection) return;
@@ -6087,7 +6408,6 @@
         imageTools.className = 'print-image-tools';
       }
 
-      var imageRecommendation = figureRecommendation(figureId);
       var imageLabel = document.createElement('div');
       imageLabel.className = 'print-image-tools-label';
       var imageLabelText = document.createElement('span');
@@ -6096,13 +6416,6 @@
       var selectionCountBadge = document.createElement('span');
       selectionCountBadge.className = 'print-image-selection-count';
       imageLabel.appendChild(selectionCountBadge);
-      if (imageRecommendation && imageRecommendation.targetScalePct < 100) {
-        var imageBadge = document.createElement('span');
-        imageBadge.className = 'print-inline-suggestion-badge';
-        imageBadge.textContent = imageRecommendation.label;
-        imageBadge.title = joinRecommendationReasons(imageRecommendation) || imageRecommendation.label;
-        imageLabel.appendChild(imageBadge);
-      }
       imageTools.appendChild(imageLabel);
 
       var infoRow = document.createElement('div');
@@ -6118,12 +6431,8 @@
       scaleRange.tabIndex = 0;
       scaleRange.setAttribute('role', 'slider');
       scaleRange.setAttribute('aria-label', '이미지 크기');
-      scaleRange.title = imageRecommendation && imageRecommendation.targetScalePct < 100 ? (imageRecommendation.label + ' - ' + (joinRecommendationReasons(imageRecommendation) || '이미지 축소 추천')) : '이미지 크기 직접 조절';
-      if (imageRecommendation && imageRecommendation.targetScalePct < 100) {
-        scaleRange.dataset.printSuggestedScale = String(imageRecommendation.targetScalePct);
-      } else {
-        delete scaleRange.dataset.printSuggestedScale;
-      }
+      scaleRange.title = '이미지 크기 직접 조절';
+      delete scaleRange.dataset.printSuggestedScale;
 
       var scaleTrack = document.createElement('div');
       scaleTrack.className = 'print-image-scale-track';
@@ -6210,20 +6519,6 @@
 
       var actionRow = document.createElement('div');
       actionRow.className = 'print-image-tools-row print-image-tools-actions';
-
-      if (imageRecommendation && imageRecommendation.targetScalePct < 100) {
-        var recommendButton = document.createElement('button');
-        recommendButton.type = 'button';
-        recommendButton.className = 'print-image-tool-button is-suggested';
-        recommendButton.textContent = '추천';
-        recommendButton.title = imageRecommendation.label + ' - ' + (joinRecommendationReasons(imageRecommendation) || '추천 크기로 조정');
-        recommendButton.addEventListener('click', function () {
-          updateImageSliderVisual(scaleRange, imageRecommendation.targetScalePct);
-          scaleValue.textContent = formatImageScaleLabel(imageRecommendation.targetScalePct);
-          setFigureScale(figureId, imageRecommendation.targetScalePct, 'image_recommend_button');
-        });
-        actionRow.appendChild(recommendButton);
-      }
 
       var resetButton = document.createElement('button');
       resetButton.type = 'button';
@@ -6340,6 +6635,7 @@
         figure.dataset.printImageToolsBound = 'true';
 
         figure.addEventListener('click', function (event) {
+          if (textEditModeEnabled) return;
           if (event.target && event.target.closest('.print-image-resize-handle')) {
             event.stopPropagation();
             return;
@@ -6489,70 +6785,104 @@
       'body.print-ready[data-print-preview-spacing="relaxed"] .print-figure-pair, body.print-ready[data-print-preview-spacing="relaxed"] .print-numbered-step-pair, body.print-ready[data-print-preview-spacing="relaxed"] .print-shortcut-block{margin-top:0.22rem!important;margin-bottom:0.72rem!important;}',
       'body.print-ready[data-print-preview-spacing="airy"] .print-section{margin:1.15rem 0 1.42rem!important;}',
       'body.print-ready[data-print-preview-spacing="airy"] .print-figure-pair, body.print-ready[data-print-preview-spacing="airy"] .print-numbered-step-pair, body.print-ready[data-print-preview-spacing="airy"] .print-shortcut-block{margin-top:0.3rem!important;margin-bottom:0.9rem!important;}',
-      '@media screen {',
-      '  body.print-ready{min-height:100vh;background:var(--print-ui-canvas)!important;}',
-      '  body.print-ready.print-editor-open{padding-right:396px;}',
-      '  body.print-ready .pagedjs_pages{max-width:880px;margin:0 auto;padding:18px 0 80px;}',
-      '  body.print-ready .pagedjs_page{margin:0 auto 28px!important;border:1px solid rgba(19,22,27,0.42);border-radius:16px;background:#fcfcfb;box-shadow:var(--print-ui-paper-shadow);position:relative;overflow:visible;}',
+      '  body.print-ready{min-height:100vh;background:var(--print-ui-canvas)!important;--print-stage-max-width:900px;--print-left-rail:0px;--print-right-rail:0px;--print-stage-shift:calc((var(--print-left-rail) - var(--print-right-rail)) / 2);position:relative;overflow-x:hidden;}',
+      '  body.print-ready::before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 14% 12%, rgba(240,245,255,0.18) 0%, transparent 30%), radial-gradient(circle at 86% 10%, rgba(251,230,192,0.12) 0%, transparent 24%), repeating-linear-gradient(90deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 88px), repeating-linear-gradient(180deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 88px);opacity:0.62;pointer-events:none;z-index:0;}',
+      '  body.print-ready::after{content:"";position:fixed;left:50%;top:0;width:min(1120px, 92vw);height:100vh;transform:translateX(-50%);background:linear-gradient(180deg, rgba(255,255,255,0.06), transparent 24%, transparent 76%, rgba(255,255,255,0.04));pointer-events:none;opacity:0.58;z-index:0;}',
+      '  body.print-ready.print-editor-open{--print-right-rail:392px;padding-right:0!important;}',
+      '  body.print-ready.print-page-sidebar-open{--print-left-rail:214px;}',
+      '  body.print-ready .pagedjs_pages{width:min(var(--print-stage-max-width), calc(100vw - 56px - var(--print-left-rail) - var(--print-right-rail)));max-width:var(--print-stage-max-width);margin:0 auto;padding:32px 0 112px;position:relative;transform:translateX(var(--print-stage-shift));transition:transform 180ms ease,width 180ms ease;z-index:1;}',
+      '  body.print-ready .pagedjs_page{margin:0 auto 40px!important;border:1px solid rgba(203,213,225,0.78);border-radius:0;background:linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(248,250,252,1) 100%);box-shadow:0 38px 80px rgba(2,6,23,0.18), 0 14px 30px rgba(15,23,42,0.10);position:relative;overflow:visible;}',
       '  body.print-ready .pagedjs_page::before{display:none!important;content:none!important;}',
+      '  body.print-ready .pagedjs_page::after{content:"";position:absolute;inset:10px;border-radius:0;box-shadow:inset 0 0 0 1px rgba(148,163,184,0.12);pointer-events:none;}',
+      '  body.print-ready .pagedjs_page .pagedjs_pagebox, body.print-ready .pagedjs_page .pagedjs_page_content{border-radius:0;overflow:hidden;background:transparent;}',
       '  body.print-ready .print-page-action-group{position:absolute;top:-16px;right:18px;display:flex;gap:8px;z-index:9;opacity:0;transform:translateY(-2px);transition:opacity 140ms ease,transform 140ms ease;}',
       '  body.print-ready .pagedjs_page:hover .print-page-action-group{opacity:1;transform:translateY(0);}',
       '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:5px 10px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 10px 18px rgba(4,6,10,0.22);}',
       '  body.print-ready .print-page-delete-button{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
-      '  body.print-ready .print-editor-banner{position:sticky;top:0;z-index:10000;display:flex!important;flex-wrap:wrap;align-items:center;gap:10px;margin:0 auto 14px;padding:12px 14px;max-width:980px;border:1px solid var(--print-editor-border);border-radius:18px;background:var(--print-ui-surface-strong);box-shadow:var(--print-ui-shadow);}',
-      '  body.print-ready .print-editor-banner-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:8px 12px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.84rem;font-weight:800;cursor:pointer;}',
-      '  body.print-ready .print-editor-banner-button.is-primary{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
-      '  body.print-ready .print-editor-banner-button:disabled{cursor:default;opacity:0.5;}',
-      '  body.print-ready .print-editor-banner-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
-      '  body.print-ready .print-editor-banner-status{margin-left:auto;font-size:0.82rem;font-weight:700;color:var(--print-ui-muted);}',
-      '  body.print-ready .print-editor-banner{display:flex!important;}',
-      '  body.print-ready .print-editor-launcher{position:fixed;right:18px;bottom:18px;z-index:9999;display:block!important;border:1px solid var(--print-editor-border);border-radius:999px;padding:12px 16px;background:var(--print-ui-surface-strong);color:var(--print-ui-text);font:inherit;font-weight:700;box-shadow:var(--print-ui-shadow);cursor:pointer;}',
-      '  body.print-ready .print-editor-panel{position:fixed;top:16px;right:16px;bottom:16px;width:360px;display:none!important;flex-direction:column;gap:14px;padding:16px;border:1px solid var(--print-editor-border);border-radius:18px;background:var(--print-ui-surface);backdrop-filter:blur(12px);box-shadow:var(--print-ui-shadow);z-index:9998;}',
-      '  body.print-ready .print-editor-panel{display:none!important;}',
+      '  body.print-ready .print-editor-banner{position:sticky;top:12px;z-index:10000;display:grid!important;grid-template-columns:minmax(0,1fr) auto;gap:12px 14px;margin:0 auto 22px;padding:14px 16px 12px;max-width:min(1120px, calc(100vw - 32px));border:1px solid rgba(233,240,248,0.08);border-radius:20px;background:rgba(11,14,18,0.84);backdrop-filter:blur(20px) saturate(140%);box-shadow:0 26px 64px rgba(2,6,23,0.24);transform:translateX(var(--print-stage-shift));transition:transform 180ms ease,border-color 160ms ease,box-shadow 160ms ease;overflow:hidden;}',
+      '  body.print-ready .print-editor-banner::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01));pointer-events:none;}',
+      '  body.print-ready .print-editor-banner > *{position:relative;z-index:1;}',
+      '  body.print-ready .print-editor-banner-brand{display:flex;align-items:center;gap:12px;min-width:0;padding-right:14px;border-right:1px solid rgba(233,240,248,0.08);}',
+      '  body.print-ready .print-editor-banner-brand::before{content:"";flex:0 0 10px;width:10px;height:10px;border-radius:999px;background:linear-gradient(180deg, #dbe6f3, #90a8c8);box-shadow:0 0 0 4px rgba(159,183,216,0.10);}',
+      '  body.print-ready .print-editor-banner-brand-text{min-width:0;display:flex;flex-direction:column;gap:2px;}',
+      '  body.print-ready .print-editor-banner-app{font-size:0.66rem;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-banner-title{display:block;min-width:0;font-size:0.98rem;font-weight:800;line-height:1.2;color:var(--print-ui-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '  body.print-ready .print-editor-banner-subtitle{font-size:0.72rem;font-weight:700;line-height:1.2;color:var(--print-ui-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '  body.print-ready .print-editor-banner-mode{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;min-height:24px;padding:0 10px;border:1px solid rgba(233,240,248,0.10);border-radius:999px;background:rgba(255,255,255,0.05);font-size:0.68rem;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-banner-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;}',
+      '  body.print-ready .print-editor-banner-actions.is-primary{grid-column:1 / -1;justify-content:flex-start;}',
+      '  body.print-ready .print-editor-banner-actions.is-secondary{justify-content:flex-end;}',
+      '  body.print-ready .print-editor-banner-meta{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding-top:10px;border-top:1px solid rgba(233,240,248,0.08);}',
+      '  body.print-ready .print-editor-banner-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;border:1px solid rgba(233,240,248,0.10);border-radius:12px;padding:0 12px;background:rgba(255,255,255,0.05);color:var(--print-ui-text);font:inherit;font-size:0.81rem;font-weight:800;cursor:pointer;transition:background 140ms ease,border-color 140ms ease,transform 140ms ease,box-shadow 140ms ease;}',
+      '  body.print-ready .print-editor-banner-button:hover{transform:translateY(-1px);background:rgba(255,255,255,0.08);border-color:rgba(233,240,248,0.16);box-shadow:0 12px 24px rgba(2,6,23,0.16);}',
+      '  body.print-ready .print-editor-banner-button.is-primary{background:linear-gradient(180deg, #d9e5f2 0%, #b8c9de 100%);border-color:rgba(211,225,241,0.72);color:#17202c;box-shadow:0 12px 24px rgba(2,6,23,0.16);}',
+      '  body.print-ready .print-editor-banner-button.is-recommendation, body.print-ready .print-editor-banner-button.is-toggle.is-active, body.print-ready .print-editor-banner-button.is-panel.is-active{background:rgba(159,183,216,0.16);border-color:rgba(159,183,216,0.26);color:#eef3f9;}',
+      '  body.print-ready .print-editor-banner-button.is-danger{color:var(--print-ui-danger);border-color:rgba(239,179,174,0.24);background:rgba(239,179,174,0.08);}',
+      '  body.print-ready .print-editor-banner-button:disabled{cursor:default;opacity:0.48;transform:none!important;box-shadow:none!important;}',
+      '  body.print-ready .print-editor-banner-summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0;}',
+      '  body.print-ready .print-editor-banner-status{margin-left:auto;min-width:260px;max-width:100%;font-size:0.78rem;font-weight:700;color:var(--print-ui-muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '  body.print-ready .print-editor-launcher{position:fixed;right:20px;bottom:20px;z-index:9999;display:inline-flex!important;align-items:center;justify-content:center;min-height:46px;padding:0 16px;border:1px solid rgba(233,240,248,0.10);border-radius:16px;background:rgba(10,13,18,0.92);color:var(--print-ui-text);font:inherit;font-size:0.82rem;font-weight:800;letter-spacing:0.02em;box-shadow:0 22px 46px rgba(2,6,23,0.24);cursor:pointer;backdrop-filter:blur(18px) saturate(140%);transition:transform 140ms ease,opacity 140ms ease,border-color 140ms ease,box-shadow 140ms ease;}',
+      '  body.print-ready .print-editor-launcher:hover{transform:translateY(-1px);border-color:rgba(233,240,248,0.16);box-shadow:0 26px 54px rgba(2,6,23,0.28);}',
+      '  body.print-ready.print-editor-open .print-editor-launcher{opacity:0;pointer-events:none;transform:translateY(8px);}',
+      '  body.print-ready .print-editor-panel{position:fixed;top:16px;right:16px;bottom:16px;width:min(392px, calc(100vw - 32px));display:none!important;flex-direction:column;gap:10px;padding:14px;border:1px solid rgba(233,240,248,0.08);border-radius:22px;background:rgba(11,14,18,0.90);backdrop-filter:blur(20px) saturate(140%);box-shadow:0 28px 72px rgba(2,6,23,0.30);z-index:9998;overflow:hidden;}',
+      '  body.print-ready .print-editor-panel::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));pointer-events:none;}',
+      '  body.print-ready .print-editor-panel > *{position:relative;z-index:1;}',
       '  body.print-ready.print-editor-open .print-editor-panel{display:flex!important;}',
-      '  body.print-ready .print-editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}',
-      '  body.print-ready .print-editor-title{font-size:1rem;font-weight:800;line-height:1.35;margin:0;color:var(--print-ui-text);}',
-      '  body.print-ready .print-editor-subtitle{margin:4px 0 0;font-size:0.86rem;line-height:1.45;color:var(--print-ui-muted);}',
-      '  body.print-ready .print-editor-close{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:6px 10px;font:inherit;cursor:pointer;}',
-      '  body.print-ready .print-editor-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}',
-      '  body.print-ready .print-editor-summary-chip{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.06);}',
-      '  body.print-ready .print-editor-summary-chip strong{font-size:1rem;line-height:1.1;color:var(--print-ui-text);}',
-      '  body.print-ready .print-editor-summary-chip span{font-size:0.72rem;font-weight:700;color:var(--print-ui-subtle);}',
-      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip{padding:6px 10px;gap:1px;}',
-      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip strong{font-size:0.82rem;}',
-      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip span{font-size:0.64rem;}',
-      '  body.print-ready .print-editor-filter-bar{display:flex;flex-wrap:wrap;gap:6px;}',
-      '  body.print-ready .print-editor-filter-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:7px 11px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.78rem;font-weight:800;cursor:pointer;}',
-      '  body.print-ready .print-editor-filter-button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
-      '  body.print-ready .print-editor-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}',
-      '  body.print-ready .print-editor-actions button{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:9px 10px;font:inherit;font-weight:700;cursor:pointer;}',
-      '  body.print-ready .print-editor-actions button.print-editor-primary{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
-      '  body.print-ready .print-editor-actions button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
-      '  body.print-ready .print-editor-note{margin:0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid var(--print-editor-border);font-size:0.84rem;line-height:1.5;color:var(--print-ui-muted);}',
-      '  body.print-ready .print-editor-navigator{display:grid;grid-template-columns:1fr auto;gap:8px 10px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.04);}',
-      '  body.print-ready .print-editor-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px;border:1px solid var(--print-editor-border);border-radius:14px;background:rgba(255,255,255,0.04);}',
+      '  body.print-ready .print-editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:4px 4px 2px;}',
+      '  body.print-ready .print-editor-title{font-size:1.06rem;font-weight:900;line-height:1.25;margin:0;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-subtitle{margin:4px 0 0;font-size:0.8rem;line-height:1.45;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-close{border:1px solid rgba(233,240,248,0.10);background:rgba(255,255,255,0.05);color:var(--print-ui-text);border-radius:12px;padding:8px 12px;font:inherit;font-size:0.8rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-section{padding:12px;border:1px solid rgba(233,240,248,0.08);border-radius:16px;background:rgba(255,255,255,0.04);}',
+      '  body.print-ready .print-editor-section.is-list{flex:1;min-height:0;display:flex;flex-direction:column;}',
+      '  body.print-ready .print-editor-section-title{margin:0 0 10px;font-size:0.68rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px;}',
+      '  body.print-ready .print-editor-summary-chip{display:flex;flex-direction:column;gap:3px;padding:10px 11px;border:1px solid rgba(233,240,248,0.08);border-radius:14px;background:rgba(255,255,255,0.04);}',
+      '  body.print-ready .print-editor-summary-chip strong{font-size:1rem;line-height:1.05;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-summary-chip span{font-size:0.68rem;font-weight:800;letter-spacing:0.03em;color:var(--print-ui-subtle);text-transform:uppercase;}',
+      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip{min-width:76px;padding:6px 9px;gap:2px;background:rgba(255,255,255,0.03);}',
+      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip strong{font-size:0.8rem;}',
+      '  body.print-ready .print-editor-banner-summary .print-editor-summary-chip span{font-size:0.58rem;}',
+      '  body.print-ready .print-editor-filter-bar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:4px;border:1px solid rgba(233,240,248,0.08);border-radius:12px;background:rgba(255,255,255,0.03);}',
+      '  body.print-ready .print-editor-filter-button{border:1px solid transparent;border-radius:10px;padding:8px 10px;background:transparent;color:var(--print-ui-muted);font:inherit;font-size:0.76rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-filter-button.is-active{background:rgba(159,183,216,0.16);border-color:rgba(159,183,216,0.24);color:#eef3f9;}',
+      '  body.print-ready .print-editor-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px;}',
+      '  body.print-ready .print-editor-actions button{min-height:38px;border:1px solid rgba(233,240,248,0.08);background:rgba(255,255,255,0.05);color:var(--print-ui-text);border-radius:12px;padding:9px 10px;font:inherit;font-size:0.8rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-actions button.print-editor-primary, body.print-ready .print-editor-actions button.is-active{background:rgba(159,183,216,0.16);border-color:rgba(159,183,216,0.24);color:#eef3f9;}',
+      '  body.print-ready .print-editor-note{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(233,240,248,0.08);font-size:0.8rem;line-height:1.5;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-navigator{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:0;border:none;background:transparent;}',
+      '  body.print-ready .print-editor-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0;border:none;background:transparent;}',
       '  body.print-ready .print-editor-field{display:flex;flex-direction:column;gap:6px;}',
-      '  body.print-ready .print-editor-field-label{font-size:0.78rem;font-weight:700;color:var(--print-ui-muted);}',
-      '  body.print-ready .print-editor-select{appearance:none;border:1px solid var(--print-editor-border);border-radius:10px;padding:9px 10px;background:var(--print-ui-surface-soft);font:inherit;font-size:0.85rem;color:var(--print-ui-text);}',
-      '  body.print-ready .print-editor-secondary{align-self:end;border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:9px 12px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap;}',
-      '  body.print-ready .print-editor-list-meta{margin:0;font-size:0.78rem;font-weight:700;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-field-label{font-size:0.74rem;font-weight:800;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-editor-search-input{appearance:none;width:100%;min-height:40px;border:1px solid rgba(233,240,248,0.10);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.05);font:inherit;font-size:0.84rem;color:var(--print-ui-text);outline:none;}',
+      '  body.print-ready .print-editor-search-input::placeholder{color:rgba(214,224,236,0.52);}',
+      '  body.print-ready .print-editor-search-input:focus{border-color:rgba(159,183,216,0.34);box-shadow:0 0 0 1px rgba(159,183,216,0.16);}',
+      '  body.print-ready .print-editor-search-meta{margin:2px 0 0;font-size:0.74rem;font-weight:700;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-search-results{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto;padding-right:4px;}',
+      '  body.print-ready .print-editor-search-result{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;border:1px solid rgba(233,240,248,0.08);border-radius:14px;padding:11px 12px;background:rgba(255,255,255,0.04);color:var(--print-ui-text);font:inherit;text-align:left;cursor:pointer;transition:border-color 140ms ease,background 140ms ease,transform 140ms ease,box-shadow 140ms ease;}',
+      '  body.print-ready .print-editor-search-result:hover{transform:translateY(-1px);border-color:rgba(159,183,216,0.20);background:rgba(255,255,255,0.06);box-shadow:0 12px 24px rgba(2,6,23,0.12);}',
+      '  body.print-ready .print-editor-search-result.is-selected{border-color:rgba(159,183,216,0.34);box-shadow:0 0 0 1px rgba(159,183,216,0.22), 0 12px 24px rgba(2,6,23,0.12);}',
+      '  body.print-ready .print-editor-search-result-page{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 8px;border-radius:999px;background:rgba(159,183,216,0.16);color:#eef3f9;font-size:0.66rem;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;}',
+      '  body.print-ready .print-editor-search-result-snippet{font-size:0.82rem;line-height:1.55;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-search-result-snippet mark{background:rgba(159,183,216,0.20);color:#f7fbff;padding:0 0.18em;border-radius:4px;}',
+      '  body.print-ready .print-editor-select{appearance:none;border:1px solid rgba(233,240,248,0.08);border-radius:10px;padding:9px 10px;background:rgba(255,255,255,0.04);font:inherit;font-size:0.82rem;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-secondary{align-self:end;min-height:38px;border:1px solid rgba(233,240,248,0.08);background:rgba(255,255,255,0.05);color:var(--print-ui-text);border-radius:12px;padding:9px 12px;font:inherit;font-size:0.8rem;font-weight:800;cursor:pointer;white-space:nowrap;}',
+      '  body.print-ready .print-editor-list-meta{margin:0 0 10px;font-size:0.76rem;font-weight:800;color:var(--print-ui-subtle);}',
       '  body.print-ready .print-editor-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;}',
-      '  body.print-ready .print-editor-empty{padding:14px;border:1px dashed rgba(255,255,255,0.18);border-radius:14px;background:rgba(255,255,255,0.04);font-size:0.84rem;line-height:1.55;color:var(--print-ui-subtle);}',
-      '  body.print-ready .print-editor-item{border:1px solid var(--print-editor-border);border-radius:14px;padding:12px;background:rgba(255,255,255,0.05);}',
-      '  body.print-ready .print-editor-item.is-selected{border-color:rgba(154,179,223,0.52);box-shadow:0 0 0 2px rgba(154,179,223,0.18);}',
-      '  body.print-ready .print-editor-item.print-mode-force{border-color:rgba(154,179,223,0.5);background:rgba(154,179,223,0.12);}',
-      '  body.print-ready .print-editor-item.print-mode-keep{border-color:rgba(255,255,255,0.14);background:rgba(255,255,255,0.03);}',
-      '  body.print-ready .print-editor-item.is-recommended{box-shadow:0 0 0 2px rgba(154,179,223,0.26);}',
-      '  body.print-ready .print-editor-item.is-manual{border-color:rgba(245,158,11,0.28);}',
+      '  body.print-ready .print-editor-empty{padding:14px;border:1px dashed rgba(233,240,248,0.14);border-radius:14px;background:rgba(255,255,255,0.03);font-size:0.82rem;line-height:1.55;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-editor-item{border:1px solid rgba(233,240,248,0.08);border-radius:14px;padding:11px 12px;background:rgba(255,255,255,0.04);box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);}',
+      '  body.print-ready .print-editor-item.is-selected{border-color:rgba(159,183,216,0.34);box-shadow:0 0 0 1px rgba(159,183,216,0.22), inset 0 1px 0 rgba(255,255,255,0.02);}',
+      '  body.print-ready .print-editor-item.print-mode-force{border-color:rgba(159,183,216,0.34);background:rgba(159,183,216,0.10);}',
+      '  body.print-ready .print-editor-item.print-mode-keep{border-color:rgba(255,255,255,0.10);background:rgba(255,255,255,0.025);}',
+      '  body.print-ready .print-editor-item.is-recommended{box-shadow:0 0 0 1px rgba(159,183,216,0.24), 0 12px 24px rgba(2,6,23,0.10);}',
+      '  body.print-ready .print-editor-item.is-manual{border-color:rgba(245,158,11,0.24);}',
       '  body.print-ready .print-editor-item-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;}',
-      '  body.print-ready .print-editor-item-label{margin:0;font-size:0.92rem;font-weight:700;line-height:1.4;color:var(--print-ui-text);}',
-      '  body.print-ready .print-editor-item-meta{margin:0;font-size:0.78rem;color:var(--print-ui-subtle);line-height:1.45;}',
-      '  body.print-ready .print-editor-suggestion-badge, body.print-ready .print-inline-suggestion-badge{display:inline-flex!important;align-items:center;justify-content:center;width:max-content;margin-top:6px;padding:3px 8px;border-radius:999px;background:rgba(154,179,223,0.18);color:#d9e5fb;font-size:0.7rem;font-weight:800;letter-spacing:0.01em;}',
-      '  body.print-ready .print-editor-item-jump{border:none;background:transparent;color:var(--print-editor-accent);font:inherit;font-weight:700;cursor:pointer;padding:0;white-space:nowrap;}',
+      '  body.print-ready .print-editor-item-label{margin:0;font-size:0.9rem;font-weight:800;line-height:1.4;color:var(--print-ui-text);}',
+      '  body.print-ready .print-editor-item-meta{margin:0;font-size:0.76rem;color:var(--print-ui-subtle);line-height:1.45;}',
+      '  body.print-ready .print-editor-suggestion-badge, body.print-ready .print-inline-suggestion-badge{display:inline-flex!important;align-items:center;justify-content:center;width:max-content;margin-top:6px;padding:3px 8px;border-radius:999px;background:rgba(159,183,216,0.16);color:#e5eefb;font-size:0.68rem;font-weight:800;letter-spacing:0.03em;}',
+      '  body.print-ready .print-editor-item-jump{border:none;background:transparent;color:#d8e6f8;font:inherit;font-weight:800;cursor:pointer;padding:0;white-space:nowrap;}',
       '  body.print-ready .print-editor-item-controls{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}',
-      '  body.print-ready .print-editor-item-controls button{border:1px solid var(--print-editor-border);background:var(--print-ui-surface-soft);color:var(--print-ui-text);border-radius:10px;padding:8px 6px;font:inherit;font-size:0.8rem;font-weight:700;cursor:pointer;}',
-      '  body.print-ready .print-editor-item-controls button.is-active{background:var(--print-editor-accent);border-color:var(--print-editor-accent);color:#182230;}',
-      '  body.print-ready .print-editor-item-controls button.is-suggested, body.print-ready .print-insert-action-button.is-suggested, body.print-ready .print-image-tool-button.is-suggested{border-color:rgba(154,179,223,0.4);background:rgba(154,179,223,0.18);color:#d9e5fb;}',
+      '  body.print-ready .print-editor-item-controls button{border:1px solid rgba(233,240,248,0.08);background:rgba(255,255,255,0.05);color:var(--print-ui-text);border-radius:10px;padding:8px 6px;font:inherit;font-size:0.78rem;font-weight:800;cursor:pointer;}',
+      '  body.print-ready .print-editor-item-controls button.is-active, body.print-ready .print-editor-item-controls button.is-suggested, body.print-ready .print-insert-action-button.is-suggested, body.print-ready .print-image-tool-button.is-suggested{border-color:rgba(159,183,216,0.24);background:rgba(159,183,216,0.16);color:#eef3f9;}',
       '  body.print-ready .print-draggable-candidate{position:relative;overflow:visible;}',
       '  body.print-ready figure.image[data-print-persist-id]{position:relative;overflow:visible;display:flex;flex-direction:column;align-items:center;text-align:center;}',
       '  body.print-ready figure.image[data-print-persist-id] > a, body.print-ready figure.image[data-print-persist-id] > img{display:block;}',
@@ -6609,59 +6939,133 @@
       '  body.print-ready .print-image-tool-button.is-danger{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
       '  body.print-ready .print-image-tool-button:disabled{opacity:0.45;cursor:default;}',
       '  body.print-ready.print-editor-open{padding-right:0!important;}',
-      '  body.print-ready.print-ui-minimal .print-editor-panel, body.print-ready.print-ui-minimal .print-inline-tools, body.print-ready.print-ui-minimal .print-inline-suggestion-badge, body.print-ready.print-ui-minimal .print-editor-launcher, body.print-ready.print-ui-minimal .print-editor-banner-button[data-editor-role="panel-toggle"], body.print-ready.print-ui-minimal .print-editor-banner-summary, body.print-ready.print-ui-minimal .print-editor-banner-status{display:none!important;}',
-      '  body.print-ready .print-page-sidebar-toggle{position:fixed;top:76px;left:18px;display:inline-flex!important;align-items:center;justify-content:center;min-width:44px;height:36px;padding:0 14px;border:1px solid var(--print-editor-border);border-radius:999px;background:rgba(18,22,27,0.92);color:var(--print-ui-text);font:inherit;font-size:0.76rem;font-weight:800;letter-spacing:0.01em;cursor:pointer;box-shadow:0 14px 28px rgba(4,6,10,0.26);z-index:18;transition:left 180ms ease,background 160ms ease,box-shadow 160ms ease;}',
-      '  body.print-ready .print-page-sidebar-toggle:hover{background:rgba(29,34,41,0.96);box-shadow:0 16px 30px rgba(4,6,10,0.3);}',
-      '  body.print-ready .print-page-sidebar{position:fixed;top:66px;left:12px;bottom:12px;width:196px;padding:14px 10px 16px;border:1px solid var(--print-editor-border);border-radius:22px;background:rgba(18,22,27,0.94);color:var(--print-ui-text);box-shadow:22px 0 52px rgba(4,6,10,0.28);backdrop-filter:blur(14px);z-index:17;display:flex;flex-direction:column;gap:12px;transform:translateX(calc(-100% - 16px));transition:transform 180ms ease;}',
+      '  body.print-ready.print-ui-minimal .print-editor-panel{display:none!important;}',
+      '  body.print-ready.print-ui-minimal .print-inline-tools, body.print-ready.print-ui-minimal .print-inline-suggestion-badge{display:none!important;}',
+      '  body.print-ready.print-ui-minimal .print-editor-banner{gap:10px 12px;padding:12px 14px 11px;}',
+      '  body.print-ready.print-ui-minimal .print-editor-banner-actions.is-secondary{display:none!important;}',
+      '  body.print-ready.print-ui-minimal .print-editor-banner-meta{padding-top:8px;}',
+      '  body.print-ready .print-page-sidebar-toggle{position:fixed;top:112px;left:16px;display:inline-flex!important;align-items:center;justify-content:center;width:38px;height:110px;padding:0;border:1px solid rgba(233,240,248,0.08);border-radius:18px;background:rgba(10,13,18,0.92);color:var(--print-ui-text);cursor:pointer;box-shadow:0 18px 42px rgba(2,6,23,0.22);z-index:18;overflow:visible;transition:left 180ms ease,transform 180ms ease,border-color 140ms ease,background 140ms ease,box-shadow 140ms ease;backdrop-filter:blur(18px) saturate(140%);}',
+      '  body.print-ready .print-page-sidebar-toggle::before{content:"";position:absolute;left:8px;top:14px;bottom:14px;width:1.5px;border-radius:999px;background:linear-gradient(180deg, rgba(159,183,216,0), rgba(159,183,216,0.90) 20%, rgba(159,183,216,0.90) 80%, rgba(159,183,216,0));opacity:0.78;}',
+      '  body.print-ready .print-page-sidebar-toggle::after{content:attr(data-sidebar-label);position:absolute;left:calc(100% + 12px);top:50%;padding:7px 10px;border:1px solid rgba(233,240,248,0.08);border-radius:10px;background:rgba(10,13,18,0.94);color:var(--print-ui-text);font-size:0.68rem;font-weight:800;letter-spacing:0.03em;line-height:1;white-space:nowrap;opacity:0;pointer-events:none;transform:translateY(-50%) translateX(-6px);transition:opacity 120ms ease,transform 120ms ease;box-shadow:0 12px 22px rgba(2,6,23,0.20);}',
+      '  body.print-ready .print-page-sidebar-toggle:hover{transform:translateX(2px);border-color:rgba(233,240,248,0.14);background:rgba(14,18,24,0.96);box-shadow:0 24px 48px rgba(2,6,23,0.28);}',
+      '  body.print-ready .print-page-sidebar-toggle:hover::after, body.print-ready .print-page-sidebar-toggle:focus-visible::after{opacity:1;transform:translateY(-50%) translateX(0);}',
+      '  body.print-ready .print-page-sidebar-toggle:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(159,183,216,0.20), 0 24px 48px rgba(2,6,23,0.28);}',
+      '  body.print-ready .print-page-sidebar-toggle-handle{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;width:14px;height:44px;z-index:1;}',
+      '  body.print-ready .print-page-sidebar-toggle-handle::before{content:"";position:absolute;top:-10px;left:50%;width:3px;height:3px;border-radius:999px;background:rgba(238,243,249,0.78);transform:translateX(-50%);box-shadow:0 8px 0 rgba(238,243,249,0.54), 0 16px 0 rgba(238,243,249,0.32);}',
+      '  body.print-ready .print-page-sidebar-toggle-chevron{display:block;width:8px;height:8px;border-top:2px solid rgba(236,243,255,0.92);border-right:2px solid rgba(236,243,255,0.92);transform:rotate(45deg);opacity:0.94;transition:transform 180ms ease,opacity 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-toggle-chevron + .print-page-sidebar-toggle-chevron{margin-top:-2px;opacity:0.52;}',
+      '  body.print-ready .print-page-sidebar{position:fixed;top:72px;left:16px;bottom:16px;width:208px;padding:14px 12px 16px;border:1px solid rgba(233,240,248,0.08);border-radius:22px;background:rgba(10,13,18,0.88);color:var(--print-ui-text);box-shadow:24px 0 56px rgba(2,6,23,0.24);backdrop-filter:blur(22px) saturate(150%);z-index:17;display:flex;flex-direction:column;gap:12px;transform:translateX(calc(-100% - 18px));transition:transform 180ms ease,box-shadow 160ms ease;}',
+      '  body.print-ready .print-page-sidebar::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));pointer-events:none;border-radius:inherit;}',
+      '  body.print-ready .print-page-sidebar > *{position:relative;z-index:1;}',
       '  body.print-ready.print-page-sidebar-open .print-page-sidebar{transform:translateX(0);}',
-      '  body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:154px;}',
-      '  body.print-ready.print-page-sidebar-open .pagedjs_pages{margin-left:206px;transition:margin-left 180ms ease;}',
-      '  body.print-ready .print-page-sidebar-header{display:flex;flex-direction:column;gap:4px;padding:0 6px;}',
-      '  body.print-ready .print-page-sidebar-title{font-size:0.96rem;font-weight:900;line-height:1.2;color:var(--print-ui-text);}',
-      '  body.print-ready .print-page-sidebar-subtitle{display:none!important;}',
-      '  body.print-ready .print-page-sidebar-list{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;gap:18px;padding:6px 2px 12px;}',
-      '  body.print-ready .print-page-sidebar-item{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;padding:0;border:none;background:transparent;color:var(--print-ui-text);text-align:center;font:inherit;cursor:pointer;transition:transform 140ms ease;}',
-      '  body.print-ready .print-page-sidebar-item:hover{background:transparent;transform:translateY(-1px);}',
-      '  body.print-ready .print-page-sidebar-item.is-active{background:transparent;box-shadow:none;}',
-      '  body.print-ready .print-page-sidebar-thumb{position:relative;flex:0 0 auto;width:148px;max-width:100%;background:transparent;overflow:hidden;border-radius:14px;}',
-      '  body.print-ready .print-page-sidebar-thumb-viewport{position:relative;display:block;width:100%;height:100%;padding:6px;background:transparent;overflow:hidden;border-radius:14px;}',
-      '  body.print-ready .print-page-sidebar-sheet{position:relative;display:block;transform-origin:top left;border-radius:12px;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.08), 0 12px 20px rgba(4,6,10,0.16);pointer-events:none;}',
+      '  body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:202px;background:rgba(14,18,24,0.98);border-color:rgba(233,240,248,0.14);box-shadow:0 22px 46px rgba(2,6,23,0.28);}',
+      '  body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle::before{opacity:1;}',
+      '  body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle-chevron{transform:rotate(225deg);}',
+      '  body.print-ready.print-page-sidebar-open .pagedjs_pages{margin-left:auto;}',
+      '  body.print-ready .print-page-sidebar-header{display:flex;flex-direction:column;gap:4px;padding:2px 6px 0;}',
+      '  body.print-ready .print-page-sidebar-title{font-size:0.78rem;font-weight:900;letter-spacing:0.14em;text-transform:uppercase;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-page-sidebar-subtitle{display:block;font-size:0.72rem;font-weight:700;line-height:1.4;color:var(--print-ui-muted);}',
+      '  body.print-ready .print-page-sidebar-list{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:6px 2px 14px;scrollbar-gutter:stable;}',
+      '  body.print-ready .print-page-sidebar-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;padding:12px 8px 13px;border:1px solid transparent;border-radius:18px;background:transparent;color:var(--print-ui-text);text-align:center;font:inherit;cursor:pointer;transition:transform 140ms ease,background 140ms ease,box-shadow 140ms ease,border-color 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-item::before{content:"";position:absolute;left:6px;top:12px;bottom:12px;width:2px;border-radius:999px;background:rgba(159,183,216,0);transition:background 140ms ease,box-shadow 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-item:hover{background:rgba(255,255,255,0.03);border-color:rgba(233,240,248,0.06);transform:translateY(-1px);}',
+      '  body.print-ready .print-page-sidebar-item.is-active{background:linear-gradient(180deg, rgba(159,183,216,0.14), rgba(159,183,216,0.05));border-color:rgba(159,183,216,0.16);box-shadow:0 18px 28px rgba(2,6,23,0.14), inset 0 1px 0 rgba(255,255,255,0.04);}',
+      '  body.print-ready .print-page-sidebar-item.is-active::before{background:rgba(159,183,216,0.92);box-shadow:0 0 12px rgba(159,183,216,0.34);}',
+      '  body.print-ready .print-page-sidebar-thumb{position:relative;box-sizing:border-box;flex:0 0 auto;width:158px;max-width:100%;background:transparent;overflow:hidden;border-radius:0;}',
+      '  body.print-ready .print-page-sidebar-thumb-viewport{position:relative;box-sizing:border-box;display:block;width:100%;height:100%;padding:0;background:#fff;overflow:hidden;border-radius:0;transition:background 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-sheet{position:relative;display:block;transform-origin:top left;border-radius:0;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.08), 0 12px 20px rgba(4,6,10,0.16);pointer-events:none;transition:box-shadow 140ms ease,transform 140ms ease;}',
       '  body.print-ready .print-page-sidebar-preview{position:relative;display:block;width:100%;min-height:100%;background:transparent;pointer-events:none;}',
       '  body.print-ready .print-page-sidebar-preview-content{max-width:none!important;min-height:100%;margin:0!important;border-radius:0!important;box-shadow:none!important;pointer-events:none;}',
+      '  body.print-ready .print-page-sidebar-preview-pagebox{width:100%!important;height:100%!important;display:grid!important;background:#fff;}',
+      '  body.print-ready .print-page-sidebar-preview .pagedjs_margin:not(.hasContent){visibility:hidden;}',
+      '  body.print-ready .print-page-sidebar-preview .pagedjs_pagebox > .pagedjs_area{background:transparent;}',
+      '  body.print-ready .print-page-sidebar-preview .pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content, body.print-ready .print-page-sidebar-preview .pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content > div{height:100%!important;min-height:100%!important;}',
       '  body.print-ready .print-page-sidebar-sheet .pagedjs_page, body.print-ready .print-page-sidebar-sheet article.page{margin:0!important;box-shadow:none!important;}',
       '  body.print-ready .print-page-sidebar-sheet .print-editor-banner, body.print-ready .print-page-sidebar-sheet .print-editor-panel, body.print-ready .print-page-sidebar-sheet .print-editor-launcher, body.print-ready .print-page-sidebar-sheet .print-insert-actions, body.print-ready .print-page-sidebar-sheet .print-page-dropzone, body.print-ready .print-page-sidebar-sheet .print-inline-dropzone, body.print-ready .print-page-sidebar-sheet .print-image-tools, body.print-ready .print-page-sidebar-sheet .print-image-resize-handle, body.print-ready .print-page-sidebar-sheet .print-page-target-highlight, body.print-ready .print-page-sidebar-sheet .print-editor-target-highlight{display:none!important;}',
       '  body.print-ready .print-page-sidebar-thumb-number{display:none!important;}',
-      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-sheet{box-shadow:inset 0 0 0 2px rgba(154,179,223,0.54), 0 16px 26px rgba(4,6,10,0.2);}',
-      '  body.print-ready .print-page-sidebar-number{font-size:0.76rem;font-weight:900;line-height:1;color:var(--print-ui-muted);}',
-      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-number{color:var(--print-ui-text);}',
+      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-thumb-viewport{background:#fff;}',
+      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-sheet{transform:translateY(-1px);box-shadow:inset 0 0 0 1px rgba(159,183,216,0.56), 0 18px 30px rgba(2,6,23,0.18);}',
+      '  body.print-ready .print-page-sidebar-number{display:inline-flex;align-items:center;justify-content:center;min-width:40px;height:24px;padding:0 10px;border-radius:999px;background:rgba(255,255,255,0.04);font-size:0.70rem;font-weight:900;line-height:1;color:var(--print-ui-muted);letter-spacing:0.04em;transition:background 140ms ease,color 140ms ease,box-shadow 140ms ease;}',
+      '  body.print-ready .print-page-sidebar-item.is-active .print-page-sidebar-number{background:rgba(159,183,216,0.22);color:#f8fbff;box-shadow:inset 0 0 0 1px rgba(174,197,255,0.22);}',
       '  body.print-ready .print-image-resize-handle{position:absolute;right:-10px;bottom:-10px;display:inline-flex!important;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--print-editor-border);border-radius:999px;background:var(--print-ui-surface-strong);color:var(--print-ui-text);font:inherit;font-size:0.88rem;font-weight:800;cursor:nwse-resize;box-shadow:0 10px 16px rgba(4,6,10,0.24);z-index:8;opacity:0;transform:scale(0.96);transition:opacity 120ms ease,transform 120ms ease;}',
       '  body.print-ready figure.image[data-print-persist-id]:hover .print-image-resize-handle, body.print-ready figure.image[data-print-persist-id].print-image-tools-open .print-image-resize-handle, body.print-ready figure.image.print-selected-target .print-image-resize-handle{opacity:1;transform:scale(1);}',
       '  body.print-ready.print-image-resizing .print-image-resize-handle{opacity:1;}',
       '  body.print-ready .print-drag-handle{cursor:grab!important;}',
       '  body.print-ready.print-drag-active .print-drag-handle{cursor:grabbing!important;}',
-      '  body.print-ready.print-text-edit-mode [data-print-edit-id]{outline:2px dashed rgba(47,111,237,0.22);outline-offset:3px;border-radius:4px;min-height:1em;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-panel, body.print-ready.print-text-edit-mode .print-editor-launcher, body.print-ready.print-text-edit-mode .print-page-sidebar, body.print-ready.print-text-edit-mode .print-page-sidebar-toggle, body.print-ready.print-text-edit-mode .print-page-chrome, body.print-ready.print-text-edit-mode .print-page-action-group, body.print-ready.print-text-edit-mode .print-page-merge-button, body.print-ready.print-text-edit-mode .print-page-delete-button, body.print-ready.print-text-edit-mode .print-page-dropzone, body.print-ready.print-text-edit-mode .print-inline-dropzone, body.print-ready.print-text-edit-mode .print-inline-tools, body.print-ready.print-text-edit-mode .print-insert-actions, body.print-ready.print-text-edit-mode .print-inline-suggestion-badge, body.print-ready.print-text-edit-mode .print-image-tools, body.print-ready.print-text-edit-mode .print-image-resize-handle{display:none!important;}',
+      '  body.print-ready.print-text-edit-mode .pagedjs_pages{margin-left:auto!important;padding-top:10px;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner{max-width:min(980px, calc(100vw - 28px));grid-template-columns:minmax(0,1fr) auto;gap:10px 12px;background:rgba(12,16,22,0.96);border-color:rgba(233,240,248,0.12);box-shadow:0 24px 48px rgba(2,6,23,0.28);}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-brand{padding-right:0;border-right:none;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-summary{display:none!important;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-actions.is-secondary{display:none!important;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-actions.is-primary{grid-column:auto;justify-content:flex-end;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-meta{grid-column:1 / -1;padding-top:0;border-top:none;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-button{display:none!important;}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-button[data-editor-role="text-edit-toggle-banner"]{display:inline-flex!important;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border-color:rgba(159,183,216,0.28);background:rgba(159,183,216,0.16);color:#f8fbff;box-shadow:0 12px 24px rgba(2,6,23,0.18);}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-button[data-editor-role="text-edit-toggle-banner"].is-active{background:rgba(159,183,216,0.24);border-color:rgba(159,183,216,0.36);}',
+      '  body.print-ready.print-text-edit-mode .print-editor-banner-status{display:block!important;margin-left:0!important;text-align:left;color:#d6deea;font-size:0.82rem;}',
+      '  body.print-ready.print-text-edit-mode .print-selected-target, body.print-ready.print-text-edit-mode .print-page-target-highlight, body.print-ready.print-text-edit-mode figure.image.print-image-group-selected{outline:none!important;box-shadow:none!important;}',
+      '  body.print-ready.print-text-edit-mode [data-print-edit-id]{cursor:text;outline:2px dashed rgba(47,111,237,0.22);outline-offset:3px;border-radius:4px;min-height:1em;}',
+      '  body.print-ready.print-text-edit-mode [data-print-edit-id]:focus{outline:2px solid rgba(124,161,255,0.52);background:rgba(124,161,255,0.05);}',
       '  body.print-ready .print-has-manual-gap{margin-top:var(--print-manual-gap, 0.9em)!important;}',
       '  body.print-ready .print-page-target-highlight{box-shadow:0 0 0 4px rgba(154,179,223,0.16), 0 18px 34px rgba(4,6,10,0.22)!important;}',
       '  body.print-ready .print-editor-target-highlight{box-shadow:0 0 0 3px rgba(154,179,223,0.22)!important;}',
-      '  @media (max-width: 1280px){body.print-ready.print-editor-open{padding-right:0;}body.print-ready .print-editor-panel{width:min(400px, calc(100vw - 28px));}}',
-      '  @media (max-width: 900px){body.print-ready .print-editor-banner{padding:10px 12px;}body.print-ready .print-editor-panel{top:auto;left:12px;right:12px;bottom:12px;width:auto;max-height:78vh;border-radius:18px;}body.print-ready .print-editor-settings{grid-template-columns:1fr;}body.print-ready .print-editor-summary{grid-template-columns:repeat(2,minmax(0,1fr));}body.print-ready .print-page-sidebar{width:min(64vw,196px);}body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:calc(min(64vw,196px) - 42px);}body.print-ready.print-page-sidebar-open .pagedjs_pages{margin-left:0;}}',
-      '}',
-      '@media print {',
-      '  body.print-ready .print-editor-banner,',
-      '  body.print-ready .print-editor-launcher,',
-      '  body.print-ready .print-editor-panel,',
-      '  body.print-ready .print-page-dropzone,',
-      '  body.print-ready .print-drag-handle,',
-      '  body.print-ready .print-image-resize-handle,',
-      '  body.print-ready .print-page-action-group,',
-      '  body.print-ready .print-page-merge-button,',
-      '  body.print-ready .print-page-delete-button,',
-      '  body.print-ready .print-image-tools,',
-      '  body.print-ready .print-inline-tools,',
-      '  body.print-ready .print-insert-actions{display:none!important;}',
-      '}'
+      '  @media (max-width: 1280px){body.print-ready.print-editor-open{--print-right-rail:0px;padding-right:0;}body.print-ready.print-page-sidebar-open{--print-left-rail:0px;}body.print-ready .print-editor-panel{width:min(400px, calc(100vw - 28px));}body.print-ready .pagedjs_pages, body.print-ready .print-editor-banner, body.print-ready article.page{transform:none;}}',
+      '  @keyframes print-page-sidebar-toggle-pulse{0%,100%{opacity:0.82;}50%{opacity:1;}}',
+      '  @media (max-width: 900px){body.print-ready .print-editor-banner{grid-template-columns:minmax(0,1fr);gap:10px;padding:12px;transform:none;}body.print-ready .print-editor-banner-brand{padding-right:0;border-right:none;}body.print-ready .print-editor-banner-actions{justify-content:flex-start;}body.print-ready .print-editor-banner-meta{padding-top:8px;}body.print-ready .print-editor-banner-status{margin-left:0;min-width:0;text-align:left;}body.print-ready .print-editor-panel{top:auto;left:12px;right:12px;bottom:12px;width:auto;max-height:78vh;border-radius:18px;}body.print-ready .print-editor-settings{grid-template-columns:1fr;}body.print-ready .print-editor-summary{grid-template-columns:repeat(2,minmax(0,1fr));}body.print-ready .print-page-sidebar{width:min(68vw,220px);}body.print-ready .print-page-sidebar-toggle{top:102px;left:10px;}body.print-ready.print-page-sidebar-open{--print-left-rail:0px;}body.print-ready.print-page-sidebar-open .print-page-sidebar-toggle{left:calc(min(68vw,220px) - 6px);}body.print-ready .pagedjs_pages{width:min(var(--print-stage-max-width), calc(100vw - 24px));padding-top:24px;transform:none;}body.print-ready article.page{width:min(1040px, calc(100vw - 24px));transform:none;}}'
     ].join('');
     (document.head || document.documentElement).appendChild(style);
+    ensurePrintChromeHideStyles();
+  }
+
+  function ensurePrintChromeHideStyles() {
+    if (document.getElementById('notion-printer-print-hide-style')) return;
+    var style = document.createElement('style');
+    style.id = 'notion-printer-print-hide-style';
+    style.textContent = [
+      'body.print-ready.print-is-printing .print-editor-banner,',
+      'body.print-ready.print-is-printing .print-editor-launcher,',
+      'body.print-ready.print-is-printing .print-editor-panel,',
+      'body.print-ready.print-is-printing .print-page-dropzone,',
+      'body.print-ready.print-is-printing .print-drag-handle,',
+      'body.print-ready.print-is-printing .print-image-resize-handle,',
+      'body.print-ready.print-is-printing .print-page-action-group,',
+      'body.print-ready.print-is-printing .print-page-merge-button,',
+      'body.print-ready.print-is-printing .print-page-delete-button,',
+      'body.print-ready.print-is-printing .print-image-tools,',
+      'body.print-ready.print-is-printing .print-inline-tools,',
+      'body.print-ready.print-is-printing .print-insert-actions,',
+      'body.print-ready.print-is-printing .print-page-chrome{display:none!important;}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(style);
+    ensurePrintLifecycleBinding();
+  }
+
+  function ensurePrintLifecycleBinding() {
+    if (!document.documentElement || document.documentElement.dataset.printLifecycleBound === 'true') return;
+    document.documentElement.dataset.printLifecycleBound = 'true';
+    function syncPrintingState(active) {
+      if (!document.body) return;
+      document.body.classList.toggle('print-is-printing', !!active);
+    }
+    window.addEventListener('beforeprint', function () {
+      syncPrintingState(true);
+    });
+    window.addEventListener('afterprint', function () {
+      syncPrintingState(false);
+    });
+    if (window.matchMedia) {
+      var printMedia = window.matchMedia('print');
+      var listener = function (event) {
+        syncPrintingState(!!(event && event.matches));
+      };
+      if (typeof printMedia.addEventListener === 'function') {
+        printMedia.addEventListener('change', listener);
+      } else if (typeof printMedia.addListener === 'function') {
+        printMedia.addListener(listener);
+      }
+      syncPrintingState(!!printMedia.matches);
+    }
   }
 
   function ensurePageChromeStyles() {
@@ -6669,34 +7073,30 @@
     var style = document.createElement('style');
     style.id = 'notion-printer-page-chrome-style';
     style.textContent = [
-      '@media screen {',
-      '  body.print-ready .pagedjs_pages{padding-top:18px;}',
-      '  body.print-ready .pagedjs_page{margin:0 auto 34px!important;border:1px solid rgba(19,22,27,0.42);border-radius:18px;background:linear-gradient(180deg, rgba(255,255,255,0.96) 0, rgba(252,252,251,1) 100%);box-shadow:var(--print-ui-paper-shadow);}',
+      '  body.print-ready .pagedjs_pages{padding-top:24px;}',
+      '  body.print-ready .pagedjs_page{margin:0 auto 40px!important;border:1px solid rgba(203,213,225,0.78);border-radius:0;background:linear-gradient(180deg, rgba(255,255,255,0.99) 0, rgba(248,250,252,1) 100%);box-shadow:var(--print-ui-paper-shadow);}',
       '  body.print-ready .pagedjs_page::before{content:none!important;}',
       '  body.print-ready .pagedjs_page.print-page-continued-top{border-top-color:rgba(47,111,237,0.38);}',
       '  body.print-ready .pagedjs_page.print-page-continued-bottom{border-bottom-color:rgba(47,111,237,0.38);}',
       '  body.print-ready .pagedjs_page.print-selected-target{box-shadow:0 0 0 3px rgba(154,179,223,0.18), var(--print-ui-paper-shadow)!important;}',
-      '  body.print-ready .print-page-chrome{position:absolute;left:16px;right:16px;top:-18px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;z-index:10;pointer-events:none;}',
-      '  body.print-ready .print-page-chrome-main{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 10px;border:1px solid var(--print-editor-border);border-radius:999px;background:var(--print-ui-surface-strong);box-shadow:0 14px 24px rgba(4,6,10,0.24);pointer-events:auto;}',
+      '  body.print-ready .print-page-chrome{position:absolute;left:22px;right:22px;top:-18px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;z-index:10;pointer-events:none;}',
+      '  body.print-ready .print-page-chrome-main{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 12px;border:1px solid rgba(233,240,248,0.08);border-radius:16px;background:rgba(10,13,18,0.86);backdrop-filter:blur(18px) saturate(140%);box-shadow:0 18px 36px rgba(2,6,23,0.18);pointer-events:auto;}',
       '  body.print-ready .print-page-chrome-kicker{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
-      '  body.print-ready .print-page-chip{display:inline-flex;align-items:center;justify-content:center;padding:3px 9px;border-radius:999px;border:1px solid var(--print-editor-border);background:rgba(255,255,255,0.06);color:var(--print-ui-muted);font-size:0.68rem;font-weight:800;line-height:1.1;letter-spacing:0.01em;}',
-      '  body.print-ready .print-page-chip.is-strong{background:var(--print-editor-accent);color:#182230;border-color:var(--print-editor-accent);}',
-      '  body.print-ready .print-page-chip.is-flow{background:rgba(154,179,223,0.16);border-color:rgba(154,179,223,0.28);color:#d9e5fb;}',
-      '  body.print-ready .print-page-chip.is-warning{background:var(--print-ui-danger-soft);border-color:rgba(240,177,173,0.28);color:var(--print-ui-danger);}',
-      '  body.print-ready .print-page-chrome-title{max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.92rem;font-weight:800;line-height:1.35;color:var(--print-ui-text);}',
-      '  body.print-ready .print-page-chrome-meta{max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;font-weight:700;line-height:1.35;color:var(--print-ui-subtle);}',
+      '  body.print-ready .print-page-chip{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 9px;border-radius:999px;border:1px solid rgba(233,240,248,0.08);background:rgba(255,255,255,0.05);color:var(--print-ui-muted);font-size:0.66rem;font-weight:800;line-height:1.1;letter-spacing:0.04em;text-transform:uppercase;}',
+      '  body.print-ready .print-page-chip.is-strong{background:rgba(217,229,242,0.92);color:#17202c;border-color:rgba(217,229,242,0.92);}',
+      '  body.print-ready .print-page-chip.is-flow{background:rgba(159,183,216,0.14);border-color:rgba(159,183,216,0.18);color:#e6eef8;}',
+      '  body.print-ready .print-page-chip.is-warning{background:var(--print-ui-danger-soft);border-color:rgba(240,177,173,0.22);color:var(--print-ui-danger);}',
+      '  body.print-ready .print-page-chrome-title{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.88rem;font-weight:800;line-height:1.35;color:var(--print-ui-text);}',
+      '  body.print-ready .print-page-chrome-meta{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.71rem;font-weight:700;line-height:1.35;color:var(--print-ui-subtle);}',
       '  body.print-ready .print-page-action-group{position:static;display:flex;gap:8px;align-items:center;opacity:1!important;transform:none!important;pointer-events:auto;}',
-      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{border:1px solid var(--print-editor-border);border-radius:999px;padding:8px 12px;background:var(--print-ui-surface-soft);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 12px 20px rgba(4,6,10,0.22);}',
-      '  body.print-ready .print-page-delete-button{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.28);}',
-      '  body.print-ready .print-page-action-group button:disabled{cursor:not-allowed;opacity:0.52;box-shadow:none;background:rgba(255,255,255,0.05);color:var(--print-ui-subtle);border-color:rgba(255,255,255,0.08);}',
-      '  body.print-ready .pagedjs_page.print-selected-target .print-page-chrome-main{box-shadow:0 0 0 3px rgba(154,179,223,0.14), 0 14px 24px rgba(4,6,10,0.22);}',
-      '  @media (max-width: 900px){body.print-ready .print-page-chrome{left:10px;right:10px;top:-14px;flex-direction:column;align-items:stretch;}body.print-ready .print-page-chrome-title, body.print-ready .print-page-chrome-meta{max-width:none;}body.print-ready .print-page-action-group{justify-content:flex-end;}}',
-      '}',
-      '@media print {',
-      '  body.print-ready .print-page-chrome{display:none!important;}',
-      '}'
+      '  body.print-ready .print-page-merge-button, body.print-ready .print-page-delete-button{min-height:34px;border:1px solid rgba(233,240,248,0.08);border-radius:12px;padding:0 11px;background:rgba(10,13,18,0.84);color:var(--print-ui-text);font:inherit;font-size:0.74rem;font-weight:800;cursor:pointer;box-shadow:0 14px 24px rgba(2,6,23,0.18);backdrop-filter:blur(14px);}',
+      '  body.print-ready .print-page-delete-button{color:var(--print-ui-danger);border-color:rgba(240,177,173,0.22);}',
+      '  body.print-ready .print-page-action-group button:disabled{cursor:not-allowed;opacity:0.48;box-shadow:none;background:rgba(255,255,255,0.05);color:var(--print-ui-subtle);border-color:rgba(255,255,255,0.08);}',
+      '  body.print-ready .pagedjs_page.print-selected-target .print-page-chrome-main{box-shadow:0 0 0 3px rgba(159,183,216,0.18), 0 18px 32px rgba(2,6,23,0.22);}',
+      '  @media (max-width: 900px){body.print-ready .print-page-chrome{left:10px;right:10px;top:-14px;flex-direction:column;align-items:stretch;}body.print-ready .print-page-chrome-main{padding:8px 10px;}body.print-ready .print-page-chrome-title, body.print-ready .print-page-chrome-meta{max-width:none;}body.print-ready .print-page-action-group{justify-content:flex-end;}}'
     ].join('');
     (document.head || document.documentElement).appendChild(style);
+    ensurePrintChromeHideStyles();
   }
 
   function installEditorKeyboardShortcuts() {
@@ -6714,6 +7114,19 @@
 
       var key = String(event.key || '');
       var normalizedKey = key.toLowerCase();
+
+      if (textEditModeEnabled && event.key === 'Escape') {
+        setTextEditMode(false);
+        updateEditorBannerStatus('텍스트 수정 모드를 종료했습니다');
+        if (editorUiState.open) {
+          setEditorPanelOpen(false);
+        }
+        return;
+      }
+
+      if (textEditModeEnabled) {
+        return;
+      }
 
       if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && normalizedKey === 'z') {
         event.preventDefault();
@@ -6735,12 +7148,6 @@
         return;
       }
 
-      if (!event.shiftKey && normalizedKey === 'r') {
-        event.preventDefault();
-        jumpToRecommendedItem();
-        return;
-      }
-
       if (!event.shiftKey && key === 'Delete') {
         if (deleteSelectedTarget('keyboard_delete')) {
           event.preventDefault();
@@ -6749,10 +7156,6 @@
       }
 
       if (event.key === 'Escape') {
-        if (textEditModeEnabled) {
-          setTextEditMode(false);
-          updateEditorBannerStatus('텍스트 수정 모드를 종료했습니다');
-        }
         if (editorUiState.open) {
           setEditorPanelOpen(false);
         }
@@ -6761,7 +7164,33 @@
   }
 
   function pagesRootReady() {
-    return pagedRenderReady();
+    return pagedRenderReady() || !!document.querySelector('article.page');
+  }
+
+  function createEditorPanelSection(titleText, extraClass) {
+    var section = document.createElement('section');
+    section.className = 'print-editor-section' + (extraClass ? ' ' + extraClass : '');
+    if (titleText) {
+      var heading = document.createElement('div');
+      heading.className = 'print-editor-section-title';
+      heading.textContent = titleText;
+      section.appendChild(heading);
+    }
+    return section;
+  }
+
+  function topLevelEditorChromeNode(selector) {
+    return Array.from(document.querySelectorAll(selector)).find(function (node) {
+      return !(node && node.closest && node.closest('.pagedjs_pages'));
+    }) || null;
+  }
+
+  function removePagedEditorChromeClones() {
+    Array.from(document.querySelectorAll('.pagedjs_pages .print-editor-banner, .pagedjs_pages .print-editor-launcher, .pagedjs_pages .print-editor-panel')).forEach(function (node) {
+      if (node && node.parentNode) {
+        node.parentNode.removeChild(node);
+      }
+    });
   }
 
   function bootstrapEditorUi() {
@@ -6772,6 +7201,9 @@
     buildEditorPanel();
     installEditorKeyboardShortcuts();
     editorUiBootstrapped = true;
+    if (uiMode === 'full' && !textEditModeEnabled) {
+      editorUiState.open = true;
+    }
     syncEditorUiControls();
     refreshEditorList();
     refreshNavigatorOptions();
@@ -6819,7 +7251,7 @@
 
     if (editorListMeta) {
       var totalCount = activeBreakCandidates().length;
-      var filterLabel = filterMode === 'recommended' ? '추천만' : (filterMode === 'changed' ? '수정됨만' : '전체');
+      var filterLabel = filterMode === 'recommended' ? '표시 후보' : (filterMode === 'changed' ? '수정됨만' : '전체');
       editorListMeta.textContent = filterLabel + ' 보기 · ' + candidates.length + ' / ' + totalCount + '개';
     }
 
@@ -6827,7 +7259,7 @@
       var empty = document.createElement('div');
       empty.className = 'print-editor-empty';
       empty.textContent = filterMode === 'recommended'
-        ? '지금은 남아 있는 추천 블록이 없습니다. 이미지 추천만 남았을 수도 있으니 추천으로 이동 버튼도 함께 확인해 보세요.'
+        ? '지금은 남아 있는 표시 후보가 없습니다.'
         : (filterMode === 'changed'
           ? '아직 수동으로 조정한 블록이 없습니다.'
           : '편집할 수 있는 블록을 아직 찾지 못했습니다.');
@@ -7588,101 +8020,146 @@
   }
 
   function buildEditorPanel() {
-    if (document.querySelector('.print-editor-banner')) {
-      editorBanner = document.querySelector('.print-editor-banner');
-      editorLauncher = document.querySelector('.print-editor-launcher');
-      editorPanel = document.querySelector('.print-editor-panel');
-      editorBannerSummary = document.querySelector('.print-editor-banner-summary');
-      editorPanelSummary = document.querySelector('.print-editor-summary');
-      editorListMeta = document.querySelector('.print-editor-list-meta');
-      editorList = document.querySelector('.print-editor-list');
-      editorPageSelect = document.querySelector('[data-editor-role="page-select"]');
-      editorBlockSelect = document.querySelector('[data-editor-role="block-select"]');
-      editorFontSelect = document.querySelector('[data-editor-role="font-select"]');
-      editorSpacingSelect = document.querySelector('[data-editor-role="spacing-select"]');
-      editorNote = document.querySelector('.print-editor-note');
-      editorTextEditToggle = document.querySelector('[data-editor-role="text-edit-toggle"]');
-      editorPanelToggleButton = document.querySelector('[data-editor-role="panel-toggle"]');
-      editorBannerRecommendationButton = document.querySelector('[data-editor-role="jump-recommendation"]');
+    var existingBanner = topLevelEditorChromeNode('.print-editor-banner');
+    var existingLauncher = topLevelEditorChromeNode('.print-editor-launcher');
+    var existingPanel = topLevelEditorChromeNode('.print-editor-panel');
+    if (existingBanner && existingLauncher && existingPanel) {
+      editorBanner = existingBanner;
+      editorLauncher = existingLauncher;
+      editorPanel = existingPanel;
+      editorBannerTitleNode = editorBanner.querySelector('.print-editor-banner-title');
+      editorBannerSubtitleNode = editorBanner.querySelector('.print-editor-banner-subtitle');
+      editorBannerModeNode = editorBanner.querySelector('.print-editor-banner-mode');
+      editorBannerSummary = editorBanner.querySelector('.print-editor-banner-summary');
+      editorPanelSummary = editorPanel.querySelector('.print-editor-summary');
+      editorListMeta = editorPanel.querySelector('.print-editor-list-meta');
+      editorList = editorPanel.querySelector('.print-editor-list');
+      editorPageSelect = editorPanel.querySelector('[data-editor-role="page-select"]');
+      editorBlockSelect = editorPanel.querySelector('[data-editor-role="block-select"]');
+      editorSearchInput = editorPanel.querySelector('[data-editor-role="search-input"]');
+      editorSearchMeta = editorPanel.querySelector('[data-editor-role="search-meta"]');
+      editorSearchResults = editorPanel.querySelector('[data-editor-role="search-results"]');
+      editorFontSelect = editorPanel.querySelector('[data-editor-role="font-select"]');
+      editorSpacingSelect = editorPanel.querySelector('[data-editor-role="spacing-select"]');
+      editorNote = editorPanel.querySelector('.print-editor-note');
+      editorTextEditToggle = editorPanel.querySelector('[data-editor-role="text-edit-toggle"]');
+      editorBannerTextEditToggle = editorBanner.querySelector('[data-editor-role="text-edit-toggle-banner"]');
+      editorPanelToggleButton = editorBanner.querySelector('[data-editor-role="panel-toggle"]');
+      editorBannerRecommendationButton = editorBanner.querySelector('[data-editor-role="jump-recommendation"]');
+      removePagedEditorChromeClones();
       syncEditorUiControls();
       refreshEditorList();
+      renderEditorSearchResults();
       return;
     }
 
     editorBanner = document.createElement('div');
     editorBanner.className = 'print-editor-banner';
+    editorBanner.setAttribute('data-pagedjs-ignore', 'true');
 
-    var bannerAutoOptimize = document.createElement('button');
-    bannerAutoOptimize.type = 'button';
-    bannerAutoOptimize.className = 'print-editor-banner-button is-primary';
-    bannerAutoOptimize.textContent = '1. 자동 정리';
-    bannerAutoOptimize.addEventListener('click', function () {
-      startAutoOptimize('banner_auto_optimize');
-    });
-    editorBanner.appendChild(bannerAutoOptimize);
+    var bannerBrand = document.createElement('div');
+    bannerBrand.className = 'print-editor-banner-brand';
+
+    var bannerBrandText = document.createElement('div');
+    bannerBrandText.className = 'print-editor-banner-brand-text';
+
+    var bannerApp = document.createElement('span');
+    bannerApp.className = 'print-editor-banner-app';
+    bannerApp.textContent = 'Notion Printer';
+    bannerBrandText.appendChild(bannerApp);
+
+    editorBannerTitleNode = document.createElement('strong');
+    editorBannerTitleNode.className = 'print-editor-banner-title';
+    editorBannerTitleNode.textContent = editorDocumentTitleText();
+    bannerBrandText.appendChild(editorBannerTitleNode);
+
+    editorBannerSubtitleNode = document.createElement('span');
+    editorBannerSubtitleNode.className = 'print-editor-banner-subtitle';
+    editorBannerSubtitleNode.textContent = '원본 문서 스타일 유지 · 편집 워크스페이스';
+    bannerBrandText.appendChild(editorBannerSubtitleNode);
+    bannerBrand.appendChild(bannerBrandText);
+
+    editorBannerModeNode = document.createElement('span');
+    editorBannerModeNode.className = 'print-editor-banner-mode';
+    editorBannerModeNode.textContent = editorVariantLabelText();
+    bannerBrand.appendChild(editorBannerModeNode);
+    editorBanner.appendChild(bannerBrand);
+
+    var bannerPrimaryActions = document.createElement('div');
+    bannerPrimaryActions.className = 'print-editor-banner-actions is-primary';
 
     var bannerUndo = document.createElement('button');
     bannerUndo.type = 'button';
-    bannerUndo.className = 'print-editor-banner-button';
+    bannerUndo.className = 'print-editor-banner-button is-secondary';
+    bannerUndo.setAttribute('data-editor-role', 'undo');
     bannerUndo.textContent = '되돌리기';
     bannerUndo.addEventListener('click', function () {
       undoLastEdit();
     });
-    editorBanner.appendChild(bannerUndo);
 
     var bannerReset = document.createElement('button');
     bannerReset.type = 'button';
-    bannerReset.className = 'print-editor-banner-button';
-    bannerReset.textContent = '전체 초기화';
+    bannerReset.className = 'print-editor-banner-button is-danger';
+    bannerReset.setAttribute('data-editor-role', 'reset');
+    bannerReset.textContent = '초기화';
     bannerReset.title = '지금까지의 편집 내용을 기본 상태로 초기화';
     bannerReset.addEventListener('click', function () {
       resetAllEdits({ uiSource: 'banner_reset_all' });
     });
-    editorBanner.appendChild(bannerReset);
-
-    editorBannerRecommendationButton = document.createElement('button');
-    editorBannerRecommendationButton.type = 'button';
-    editorBannerRecommendationButton.className = 'print-editor-banner-button';
-    editorBannerRecommendationButton.setAttribute('data-editor-role', 'jump-recommendation');
-    editorBannerRecommendationButton.textContent = '2. 문제 위치';
-    editorBannerRecommendationButton.addEventListener('click', function () {
-      jumpToRecommendedItem();
-    });
-    editorBanner.appendChild(editorBannerRecommendationButton);
 
     editorPanelToggleButton = document.createElement('button');
     editorPanelToggleButton.type = 'button';
-    editorPanelToggleButton.className = 'print-editor-banner-button';
+    editorPanelToggleButton.className = 'print-editor-banner-button is-panel';
     editorPanelToggleButton.setAttribute('data-editor-role', 'panel-toggle');
-    editorPanelToggleButton.textContent = '3. 블록 조정';
+    editorPanelToggleButton.textContent = '도구 패널';
     editorPanelToggleButton.addEventListener('click', function () {
       toggleEditorPanel();
     });
-    editorBanner.appendChild(editorPanelToggleButton);
+    bannerPrimaryActions.appendChild(editorPanelToggleButton);
 
     var bannerPrint = document.createElement('button');
     bannerPrint.type = 'button';
-    bannerPrint.className = 'print-editor-banner-button';
-    bannerPrint.textContent = '바로 인쇄';
+    bannerPrint.className = 'print-editor-banner-button is-secondary';
+    bannerPrint.setAttribute('data-editor-role', 'print');
+    bannerPrint.textContent = '인쇄';
     bannerPrint.addEventListener('click', function () {
       window.print();
     });
-    editorBanner.appendChild(bannerPrint);
 
-    editorBannerSummary = document.createElement('div');
-    editorBannerSummary.className = 'print-editor-banner-summary';
-    editorBanner.appendChild(editorBannerSummary);
+    editorBannerTextEditToggle = document.createElement('button');
+    editorBannerTextEditToggle.type = 'button';
+    editorBannerTextEditToggle.className = 'print-editor-banner-button is-toggle';
+    editorBannerTextEditToggle.setAttribute('data-editor-role', 'text-edit-toggle-banner');
+    editorBannerTextEditToggle.textContent = '텍스트 수정';
+    editorBannerTextEditToggle.addEventListener('click', function () {
+      toggleTextEditMode();
+    });
+    bannerPrimaryActions.appendChild(editorBannerTextEditToggle);
+    editorBanner.appendChild(bannerPrimaryActions);
+
+    var bannerSecondaryActions = document.createElement('div');
+    bannerSecondaryActions.className = 'print-editor-banner-actions is-secondary';
+    bannerSecondaryActions.appendChild(bannerUndo);
+    bannerSecondaryActions.appendChild(bannerPrint);
+    bannerSecondaryActions.appendChild(bannerReset);
+    editorBanner.appendChild(bannerSecondaryActions);
+
+    var bannerMeta = document.createElement('div');
+    bannerMeta.className = 'print-editor-banner-meta';
+    editorBannerSummary = null;
 
     var bannerStatus = document.createElement('span');
     bannerStatus.className = 'print-editor-banner-status';
-    bannerStatus.textContent = '블록을 눌러 앞에 붙이기 또는 여기서 시작으로 직접 맞추세요';
-    editorBanner.appendChild(bannerStatus);
+    bannerStatus.textContent = '원본 본문은 유지하고, 페이지 분할과 블록 흐름만 편집합니다';
+    bannerMeta.appendChild(bannerStatus);
+    editorBanner.appendChild(bannerMeta);
     document.body.insertBefore(editorBanner, document.body.firstChild);
 
     editorLauncher = document.createElement('button');
     editorLauncher.type = 'button';
     editorLauncher.className = 'print-editor-launcher';
-    editorLauncher.textContent = '블록 조정 (E)';
+    editorLauncher.setAttribute('data-pagedjs-ignore', 'true');
+    editorLauncher.textContent = '도구 패널 (E)';
     editorLauncher.addEventListener('click', function () {
       toggleEditorPanel();
     });
@@ -7690,6 +8167,7 @@
 
     editorPanel = document.createElement('aside');
     editorPanel.className = 'print-editor-panel';
+    editorPanel.setAttribute('data-pagedjs-ignore', 'true');
 
     var header = document.createElement('div');
     header.className = 'print-editor-header';
@@ -7697,72 +8175,35 @@
     var titleWrap = document.createElement('div');
     var title = document.createElement('h2');
     title.className = 'print-editor-title';
-    title.textContent = '블록 조정';
+    title.textContent = '편집 도구';
     titleWrap.appendChild(title);
 
     var subtitle = document.createElement('p');
     subtitle.className = 'print-editor-subtitle';
-    subtitle.textContent = '자동 정리는 초안만 잡습니다. 실제 수정은 블록마다 앞에 붙이기, 여기서 시작, 빈칸 조정으로 직접 맞추세요. E: 열기, R: 문제 위치, Ctrl/Cmd+Z: 되돌리기, Shift+Delete: 전체 초기화, Esc: 닫기.';
+    subtitle.textContent = '문서 본문은 원본 스타일을 유지하고, 페이지 흐름과 배치만 직접 편집합니다. E: 패널 열기, Ctrl/Cmd+Z: 되돌리기, Esc: 닫기.';
     titleWrap.appendChild(subtitle);
     header.appendChild(titleWrap);
 
     var closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'print-editor-close';
-    closeButton.textContent = '닫기';
+    closeButton.textContent = '패널 닫기';
     closeButton.addEventListener('click', function () {
       setEditorPanelOpen(false);
     });
     header.appendChild(closeButton);
     editorPanel.appendChild(header);
 
-    editorPanelSummary = document.createElement('div');
-    editorPanelSummary.className = 'print-editor-summary';
-    editorPanel.appendChild(editorPanelSummary);
-
-    var filterBar = document.createElement('div');
-    filterBar.className = 'print-editor-filter-bar';
-    [
-      { key: 'all', label: '전체' },
-      { key: 'recommended', label: '추천만' },
-      { key: 'changed', label: '수정됨' }
-    ].forEach(function (filter) {
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'print-editor-filter-button';
-      button.textContent = filter.label;
-      button.addEventListener('click', function () {
-        setEditorFilterMode(filter.key);
-      });
-      editorFilterButtons[filter.key] = button;
-      filterBar.appendChild(button);
-    });
-    editorPanel.appendChild(filterBar);
+    var commandSection = createEditorPanelSection('빠른 작업', 'is-command');
+    editorPanelSummary = null;
 
     var actions = document.createElement('div');
     actions.className = 'print-editor-actions';
 
-    var focusRecommendationButton = document.createElement('button');
-    focusRecommendationButton.type = 'button';
-    focusRecommendationButton.className = 'print-editor-primary';
-    focusRecommendationButton.textContent = '문제 위치';
-    focusRecommendationButton.addEventListener('click', function () {
-      jumpToRecommendedItem();
-    });
-    actions.appendChild(focusRecommendationButton);
-
-    var applyRecommendationButton = document.createElement('button');
-    applyRecommendationButton.type = 'button';
-    applyRecommendationButton.className = 'print-editor-primary';
-    applyRecommendationButton.textContent = '자동 정리';
-    applyRecommendationButton.addEventListener('click', function () {
-      startAutoOptimize('panel_auto_optimize');
-    });
-    actions.appendChild(applyRecommendationButton);
-
     var panelRefresh = document.createElement('button');
     panelRefresh.type = 'button';
-    panelRefresh.textContent = '다시 계산';
+    panelRefresh.className = 'print-editor-primary';
+    panelRefresh.textContent = '레이아웃 계산';
     panelRefresh.addEventListener('click', function () {
       reloadWithPreservedFocus({ intent: 'refresh_preview', actionEventId: '' });
     });
@@ -7773,9 +8214,7 @@
     editorTextEditToggle.setAttribute('data-editor-role', 'text-edit-toggle');
     editorTextEditToggle.textContent = '텍스트 수정';
     editorTextEditToggle.addEventListener('click', function () {
-      var nextEnabled = !textEditModeEnabled;
-      setTextEditMode(nextEnabled);
-      updateEditorBannerStatus(nextEnabled ? '텍스트 수정 모드를 시작했습니다' : '텍스트 수정 모드를 종료했습니다');
+      toggleTextEditMode();
     });
     actions.appendChild(editorTextEditToggle);
 
@@ -7789,64 +8228,60 @@
 
     var panelReset = document.createElement('button');
     panelReset.type = 'button';
-    panelReset.textContent = '전체 초기화';
+    panelReset.textContent = '편집 초기화';
     panelReset.addEventListener('click', function () {
       resetAllEdits({ uiSource: 'panel_reset_all' });
     });
     actions.appendChild(panelReset);
 
-    editorPanel.appendChild(actions);
+    commandSection.appendChild(actions);
 
     editorNote = document.createElement('p');
     editorNote.className = 'print-editor-note';
-    editorPanel.appendChild(editorNote);
+    commandSection.appendChild(editorNote);
+    editorPanel.appendChild(commandSection);
 
-    var navigator = document.createElement('div');
-    navigator.className = 'print-editor-navigator';
-
-    var pageField = document.createElement('label');
-    pageField.className = 'print-editor-field';
-    var pageLabel = document.createElement('span');
-    pageLabel.className = 'print-editor-field-label';
-    pageLabel.textContent = '페이지 이동';
-    pageField.appendChild(pageLabel);
-    editorPageSelect = document.createElement('select');
-    editorPageSelect.className = 'print-editor-select';
-    editorPageSelect.setAttribute('data-editor-role', 'page-select');
-    pageField.appendChild(editorPageSelect);
-    navigator.appendChild(pageField);
-
-    var pageJumpButton = document.createElement('button');
-    pageJumpButton.type = 'button';
-    pageJumpButton.className = 'print-editor-secondary';
-    pageJumpButton.textContent = '페이지 이동';
-    pageJumpButton.addEventListener('click', function () {
-      jumpToSelectedPage();
+    editorPageSelect = null;
+    editorBlockSelect = null;
+    var searchSection = createEditorPanelSection('검색', 'is-search');
+    var searchField = document.createElement('label');
+    searchField.className = 'print-editor-field';
+    var searchLabel = document.createElement('span');
+    searchLabel.className = 'print-editor-field-label';
+    searchLabel.textContent = '단어 검색';
+    searchField.appendChild(searchLabel);
+    editorSearchInput = document.createElement('input');
+    editorSearchInput.type = 'search';
+    editorSearchInput.className = 'print-editor-search-input';
+    editorSearchInput.placeholder = '용어, 장비명, 문장 일부 검색';
+    editorSearchInput.setAttribute('data-editor-role', 'search-input');
+    editorSearchInput.autocomplete = 'off';
+    editorSearchInput.spellcheck = false;
+    editorSearchInput.value = editorSearchQuery;
+    editorSearchInput.addEventListener('input', function () {
+      editorSearchQuery = editorSearchInput.value || '';
+      renderEditorSearchResults();
     });
-    navigator.appendChild(pageJumpButton);
-
-    var blockField = document.createElement('label');
-    blockField.className = 'print-editor-field';
-    var blockLabel = document.createElement('span');
-    blockLabel.className = 'print-editor-field-label';
-    blockLabel.textContent = '블록 이동';
-    blockField.appendChild(blockLabel);
-    editorBlockSelect = document.createElement('select');
-    editorBlockSelect.className = 'print-editor-select';
-    editorBlockSelect.setAttribute('data-editor-role', 'block-select');
-    blockField.appendChild(editorBlockSelect);
-    navigator.appendChild(blockField);
-
-    var blockJumpButton = document.createElement('button');
-    blockJumpButton.type = 'button';
-    blockJumpButton.className = 'print-editor-secondary';
-    blockJumpButton.textContent = '블록 이동';
-    blockJumpButton.addEventListener('click', function () {
-      jumpToSelectedBlock();
+    editorSearchInput.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      jumpToFirstSearchResult();
     });
-    navigator.appendChild(blockJumpButton);
-    editorPanel.appendChild(navigator);
+    searchField.appendChild(editorSearchInput);
+    searchSection.appendChild(searchField);
 
+    editorSearchMeta = document.createElement('div');
+    editorSearchMeta.className = 'print-editor-search-meta';
+    editorSearchMeta.setAttribute('data-editor-role', 'search-meta');
+    searchSection.appendChild(editorSearchMeta);
+
+    editorSearchResults = document.createElement('div');
+    editorSearchResults.className = 'print-editor-search-results';
+    editorSearchResults.setAttribute('data-editor-role', 'search-results');
+    searchSection.appendChild(editorSearchResults);
+    editorPanel.appendChild(searchSection);
+
+    var viewSection = createEditorPanelSection('보기', 'is-view');
     var viewControls = document.createElement('div');
     viewControls.className = 'print-editor-settings';
 
@@ -7910,17 +8345,13 @@
     });
     spacingField.appendChild(editorSpacingSelect);
     viewControls.appendChild(spacingField);
-    editorPanel.appendChild(viewControls);
-
-    editorListMeta = document.createElement('p');
-    editorListMeta.className = 'print-editor-list-meta';
-    editorPanel.appendChild(editorListMeta);
-
-    editorList = document.createElement('div');
-    editorList.className = 'print-editor-list';
-    editorPanel.appendChild(editorList);
+    viewSection.appendChild(viewControls);
+    editorPanel.appendChild(viewSection);
+    editorListMeta = null;
+    editorList = null;
 
     document.body.appendChild(editorPanel);
+    removePagedEditorChromeClones();
     syncEditorUiControls();
     refreshEditorList();
   }
@@ -8126,6 +8557,8 @@
   ensurePaginationStyles();
   applyViewSettings();
   applyUiMode(resolveUiMode());
+  ensureEditorOverrideStyles();
+  ensurePageChromeStyles();
   watchPagedRenderReady();
   if (pagedRenderReady()) {
     handlePagedRenderReady();
@@ -8143,7 +8576,10 @@
   });
   applyConditionalPageStarts();
   waitForPagedEditorUi();
-  window.addEventListener('scroll', schedulePageSidebarSync, { passive: true });
+  window.addEventListener('scroll', function () {
+    lockViewportInteractionIfNeeded();
+    schedulePageSidebarSync();
+  }, { passive: true });
   window.addEventListener('resize', refreshPageSidebar);
   window.addEventListener('load', function () {
     waitForPagedEditorUi();

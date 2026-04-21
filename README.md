@@ -23,12 +23,29 @@ cd /home/robros0/Desktop/ws/notion_printer
 ./notion_print_export_launcher.sh
 ```
 
+## 디버그 공장
+
+랜덤 원본 문서를 여러 개 골라 실제 출력 경로로 다시 생성하고, 마지막 샘플의 HTML 미리보기를 바로 열어 편집/확인하려면 아래처럼 실행하면 됩니다.
+
+```bash
+cd /home/okj/notion_printer
+python3 scripts/print_debug_factory.py --count 2
+```
+
+기본 동작:
+
+- `~/Downloads/개인 페이지 & 공유된 페이지` 아래의 원본 Notion HTML만 랜덤 선택
+- `compact` 출력본과 `compact_fast` 출력본 생성
+- 마지막 샘플의 fast 출력본이 있으면 그걸 우선해서 localhost 미리보기로 띄움
+- 결과는 `~/Downloads/개인 페이지 & 공유된 페이지/_notion_printer_debug_factory/` 아래에 배치별로 저장
+
 ## 원클릭 앱 실행
 
-레포 루트의 바로가기 두 개를 더블클릭하면 설치 없이 실행됩니다.
+레포 루트의 바로가기 세 개를 더블클릭하면 설치 없이 실행됩니다.
 
 - [Notion Printer.desktop](/home/robros0/Desktop/ws/notion_printer/Notion%20Printer.desktop)
 - [Notion Printer Advanced.desktop](/home/robros0/Desktop/ws/notion_printer/Notion%20Printer%20Advanced.desktop)
+- [Notion Printer Debug.desktop](/home/okj/notion_printer/Notion%20Printer%20Debug.desktop)
 
 이 `.desktop`은 현재 파일 위치를 기준으로 실행기를 찾아서 동작하도록 되어 있어, 저장소 경로가 바뀌어도 재실행 가능합니다.
 
@@ -59,6 +76,9 @@ cd /home/robros0/Desktop/ws/notion_printer
 
 `결과 HTML 열기`는 이제 파일 직접 열기가 아니라 새 터미널 창에서 `localhost` 미리보기 서버를 띄운 뒤 실행됩니다.
 즉 브라우저가 출력본을 로컬 웹페이지처럼 열어서 버튼과 드래그 UI가 더 안정적으로 동작합니다.
+디버깅할 때는 생성 파일명을 직접 찾지 않아도 됩니다.
+미리보기 서버는 항상 같은 경로 `_notion_printer_debug.html`를 함께 내보내고, 포트는 사용 중인 서비스가 있으면 자동으로 다른 포트로 이동합니다.
+[open_debug_preview.sh](/home/okj/notion_printer/open_debug_preview.sh) 또는 [Notion Printer Debug.desktop](/home/okj/notion_printer/Notion%20Printer%20Debug.desktop)는 현재 실행 중인 Notion Printer 미리보기 서버의 실제 포트를 읽어서 그 디버그 화면을 바로 엽니다.
 
 ## 앱 메뉴 등록
 

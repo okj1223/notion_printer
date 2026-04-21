@@ -219,7 +219,7 @@
   function breakRecommendation(node) {
     var config = taskRules('break_recommendation');
     if (config.enabled === false) {
-      return { mode: 'auto', score: 0, label: '추천 없음', reasons: [], source: 'none' };
+      return { mode: 'auto', score: 0, label: '판단 없음', reasons: [], source: 'none' };
     }
 
     var page = capturePageContext(node);
@@ -290,7 +290,7 @@
 
     var threshold = numericSetting(blockRule.suggestion_threshold, recommendationThreshold('break_recommendation', 0.62));
     var mode = score >= threshold ? 'force' : 'auto';
-    var label = mode === 'force' ? '추천: 새 페이지 ' + roundScore(score) + '%' : '추천: 유지 ' + roundScore(1 - score) + '%';
+    var label = mode === 'force' ? '새 페이지 ' + roundScore(score) + '%' : '유지 ' + roundScore(1 - score) + '%';
     return {
       mode: mode,
       score: clamp(score, 0, 1),
@@ -303,7 +303,7 @@
   function gapRecommendation(node) {
     var config = taskRules('gap_recommendation');
     if (config.enabled === false) {
-      return { units: 0, score: 0, label: '빈칸 추천 없음', reasons: [], source: 'none' };
+      return { units: 0, score: 0, label: '추가 빈칸 없음', reasons: [], source: 'none' };
     }
     var page = capturePageContext(node);
     var block = captureBlockContext(node);
@@ -348,7 +348,7 @@
     return {
       units: units,
       score: clamp(score, 0, 1),
-      label: units > 0 ? '추천: 빈칸 +' + units : '빈칸 추천 없음',
+      label: units > 0 ? '빈칸 +' + units : '추가 빈칸 없음',
       reasons: reasons,
       source: typeof blockTypeRate === 'number' ? 'rules+model' : 'rules'
     };
@@ -357,7 +357,7 @@
   function imageRecommendation(node) {
     var config = taskRules('image_scale_recommendation');
     if (config.enabled === false) {
-      return { targetScalePct: 100, score: 0, label: '추천 없음', reasons: [], source: 'none' };
+      return { targetScalePct: 100, score: 0, label: '판단 없음', reasons: [], source: 'none' };
     }
     var page = capturePageContext(node);
     var block = captureBlockContext(node);
@@ -412,7 +412,7 @@
     return {
       targetScalePct: targetScale,
       score: clamp(score, 0, 1),
-      label: targetScale < 100 ? '추천: ' + targetScale + '%' : '추천 없음',
+      label: targetScale < 100 ? targetScale + '%' : '판단 없음',
       reasons: reasons,
       source: modelSection && Object.keys(modelSection).length ? 'rules+model' : 'rules'
     };

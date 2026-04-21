@@ -1392,7 +1392,7 @@ def generate_variant(
         body_classes=body_classes,
         source_html=source_html,
     )
-    manifest["ui_default_mode"] = "minimal"
+    manifest["ui_default_mode"] = "full"
     manifest["template_hashes"] = {
         "theme": hashlib.sha1(theme_css.encode("utf-8")).hexdigest()[:12],
         "learning": hashlib.sha1(learning_js.encode("utf-8")).hexdigest()[:12],

@@ -7,20 +7,24 @@ body.print-ready {
 	--print-indent-step: 1.35rem;
 	--print-nested-indent-step: 1.25rem;
 	--print-bullet-gutter: 0.9rem;
-	--print-editor-accent: #9ab3df;
-	--print-editor-accent-soft: rgba(154, 179, 223, 0.18);
-	--print-editor-border: rgba(255, 255, 255, 0.10);
-	--print-ui-surface: rgba(48, 53, 60, 0.94);
-	--print-ui-surface-soft: rgba(62, 68, 77, 0.92);
-	--print-ui-surface-strong: rgba(26, 30, 35, 0.96);
-	--print-ui-text: #eef2f7;
-	--print-ui-muted: #bcc4cf;
-	--print-ui-subtle: #96a1af;
-	--print-ui-shadow: 0 24px 60px rgba(4, 6, 10, 0.34);
-	--print-ui-paper-shadow: 0 28px 58px rgba(4, 6, 10, 0.34);
-	--print-ui-danger: #f0b1ad;
-	--print-ui-danger-soft: rgba(240, 177, 173, 0.14);
-	--print-ui-canvas: linear-gradient(180deg, #5a6069 0%, #3e434b 42%, #25292e 100%);
+	--print-editor-accent: #9fb7d8;
+	--print-editor-accent-soft: rgba(159, 183, 216, 0.16);
+	--print-editor-border: rgba(233, 240, 248, 0.12);
+	--print-ui-surface: rgba(18, 22, 28, 0.92);
+	--print-ui-surface-soft: rgba(31, 37, 45, 0.9);
+	--print-ui-surface-strong: rgba(13, 17, 22, 0.94);
+	--print-ui-text: #eef3f9;
+	--print-ui-muted: #b7c2d0;
+	--print-ui-subtle: #8d99aa;
+	--print-ui-shadow: 0 28px 70px rgba(2, 6, 23, 0.34);
+	--print-ui-paper-shadow: 0 38px 80px rgba(2, 6, 23, 0.18), 0 14px 30px rgba(15, 23, 42, 0.10);
+	--print-ui-danger: #efb3ae;
+	--print-ui-danger-soft: rgba(239, 179, 174, 0.16);
+	--print-ui-canvas: radial-gradient(circle at top, #5b6470 0%, #3d4650 24%, #222a33 58%, #161c23 100%);
+	--print-stage-max-width: 900px;
+	--print-left-rail: 0px;
+	--print-right-rail: 0px;
+	--print-stage-shift: calc((var(--print-left-rail) - var(--print-right-rail)) / 2);
 }
 body.print-ready p,
 body.print-ready li {
@@ -163,19 +167,59 @@ body.print-ready p:empty {
 @media only screen {
 	body.print-ready {
 		margin: 0;
-		padding: 24px 0 56px;
+		padding: 32px 0 88px;
 		max-width: none;
 		min-height: 100vh;
 		background: var(--print-ui-canvas);
+		position: relative;
+		overflow-x: hidden;
+	}
+
+	body.print-ready::before {
+		content: "";
+		position: fixed;
+		inset: 0;
+		background:
+			radial-gradient(circle at 14% 12%, rgba(240, 245, 255, 0.18) 0%, transparent 30%),
+			radial-gradient(circle at 86% 10%, rgba(251, 230, 192, 0.12) 0%, transparent 24%),
+			repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 88px),
+			repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 88px);
+		opacity: 0.62;
+		pointer-events: none;
+		z-index: 0;
+	}
+
+	body.print-ready::after {
+		content: "";
+		position: fixed;
+		left: 50%;
+		top: 0;
+		width: min(1120px, 92vw);
+		height: 100vh;
+		transform: translateX(-50%);
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 24%, transparent 76%, rgba(255, 255, 255, 0.04));
+		pointer-events: none;
+		filter: blur(0);
+		opacity: 0.58;
+		z-index: 0;
 	}
 
 	body.print-ready article.page {
+		width: min(1040px, calc(100vw - 84px - var(--print-left-rail) - var(--print-right-rail)));
 		max-width: 1040px;
 		margin: 0 auto;
 		padding: 28px 40px 48px;
 		background: #fff;
-		border-radius: 18px;
+		border-radius: 0;
 		box-shadow: 0 10px 26px rgba(34, 34, 34, 0.08);
+		position: relative;
+		z-index: 1;
+		transform: translateX(var(--print-stage-shift));
+		transition: transform 180ms ease, width 180ms ease;
+	}
+
+	body.print-ready article.page::after {
+		content: none;
 	}
 
 body .print-runtime-error-banner {
@@ -191,391 +235,6 @@ body .print-runtime-error-banner {
 	font-weight: 700;
 	white-space: pre-wrap;
 }
-
-body.print-ready .print-editor-banner {
-	position: sticky;
-	top: 0;
-	z-index: 10000;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 10px;
-	margin: 0 auto 14px;
-	padding: 12px 14px;
-	max-width: 980px;
-	border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-	background: rgba(255, 248, 215, 0.98);
-	box-shadow: 0 8px 24px rgba(17, 24, 39, 0.08);
-}
-
-body.print-ready .print-editor-banner-button {
-	border: 1px solid rgba(17, 24, 39, 0.12);
-	border-radius: 999px;
-	padding: 8px 12px;
-	background: #fff;
-	color: #111827;
-	font: inherit;
-	font-size: 0.84rem;
-	font-weight: 800;
-	cursor: pointer;
-}
-
-body.print-ready .print-editor-banner-button.is-primary {
-	background: #111827;
-	color: #fff;
-}
-
-body.print-ready .print-editor-banner-status {
-	margin-left: auto;
-	font-size: 0.82rem;
-	font-weight: 700;
-	color: #5f4c1c;
-}
-
-	body.print-ready.print-editor-open {
-		padding-right: 396px;
-	}
-
-	body.print-ready .pagedjs_pages {
-		max-width: 880px;
-		margin: 0 auto;
-		padding: 18px 0 80px;
-	}
-
-	body.print-ready .pagedjs_page {
-		margin: 0 auto 28px !important;
-		border: 2px solid rgba(37, 33, 29, 0.14);
-		border-radius: 16px;
-		background: #fff;
-		box-shadow: 0 18px 34px rgba(17, 24, 39, 0.08);
-		position: relative;
-		overflow: visible;
-	}
-
-	body.print-ready .pagedjs_page::before {
-		content: "Page " attr(data-page-number);
-		position: absolute;
-		top: -12px;
-		left: 18px;
-		padding: 2px 10px;
-		border-radius: 999px;
-		background: #111827;
-		color: #fff;
-		font-size: 0.76rem;
-		font-weight: 700;
-		letter-spacing: 0.02em;
-	}
-
-	body.print-ready .print-page-dropzone {
-		position: absolute;
-		left: 18px;
-		right: 18px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 28px;
-		border: 1.5px dashed rgba(47, 111, 237, 0.28);
-		border-radius: 12px;
-		background: rgba(47, 111, 237, 0.08);
-		color: #3658a8;
-		font-size: 0.74rem;
-		font-weight: 700;
-		text-align: center;
-		transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
-		z-index: 7;
-		pointer-events: auto;
-	}
-
-	body.print-ready .print-page-dropzone-top {
-		top: 12px;
-	}
-
-	body.print-ready .print-page-dropzone-bottom {
-		bottom: 12px;
-	}
-
-	body.print-ready .print-page-dropzone.is-over {
-		background: rgba(47, 111, 237, 0.14);
-		border-color: rgba(47, 111, 237, 0.52);
-		transform: scale(1.01);
-	}
-
-	body.print-ready .print-draggable-candidate {
-		position: relative;
-	}
-
-	body.print-ready .print-draggable-candidate:hover {
-		outline: 2px solid rgba(47, 111, 237, 0.18);
-		outline-offset: 6px;
-		border-radius: 10px;
-	}
-
-	body.print-ready .print-draggable-candidate.is-dragging {
-		opacity: 0.72;
-	}
-
-	body.print-ready .print-drag-handle {
-		position: absolute;
-		top: -10px;
-		right: -10px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid rgba(17, 24, 39, 0.14);
-		border-radius: 999px;
-		padding: 6px 10px;
-		background: rgba(255, 255, 255, 0.96);
-		color: #111827;
-		font: inherit;
-		font-size: 0.74rem;
-		font-weight: 800;
-		cursor: grab;
-		box-shadow: 0 8px 16px rgba(17, 24, 39, 0.08);
-		z-index: 8;
-	}
-
-	body.print-ready .print-drag-handle:active {
-		cursor: grabbing;
-	}
-
-	body.print-ready .print-editor-launcher {
-		position: fixed;
-		right: 18px;
-		bottom: 18px;
-		z-index: 9999;
-		border: none;
-		border-radius: 999px;
-		padding: 12px 16px;
-		background: #111827;
-		color: #fff;
-		font: inherit;
-		font-weight: 700;
-		box-shadow: 0 12px 30px rgba(17, 24, 39, 0.22);
-		cursor: pointer;
-	}
-
-	body.print-ready .print-editor-panel {
-		position: fixed;
-		top: 16px;
-		right: 16px;
-		bottom: 16px;
-		width: 360px;
-		display: none;
-		flex-direction: column;
-		gap: 14px;
-		padding: 16px;
-		border: 1px solid var(--print-editor-border);
-		border-radius: 18px;
-		background: rgba(255, 255, 255, 0.96);
-		backdrop-filter: blur(10px);
-		box-shadow: 0 24px 60px rgba(17, 24, 39, 0.16);
-		z-index: 9998;
-	}
-
-	body.print-ready.print-editor-open .print-editor-panel {
-		display: flex;
-	}
-
-	body.print-ready .print-editor-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 10px;
-	}
-
-	body.print-ready .print-editor-title {
-		font-size: 1rem;
-		font-weight: 800;
-		line-height: 1.35;
-		margin: 0;
-	}
-
-	body.print-ready .print-editor-subtitle {
-		margin: 4px 0 0;
-		font-size: 0.86rem;
-		line-height: 1.45;
-		color: #4b5563;
-	}
-
-	body.print-ready .print-editor-close {
-		border: 1px solid var(--print-editor-border);
-		background: #fff;
-		border-radius: 10px;
-		padding: 6px 10px;
-		font: inherit;
-		cursor: pointer;
-	}
-
-	body.print-ready .print-editor-actions {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 8px;
-	}
-
-	body.print-ready .print-editor-actions button {
-		border: 1px solid var(--print-editor-border);
-		background: #fff;
-		border-radius: 10px;
-		padding: 9px 10px;
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
-	}
-
-	body.print-ready .print-editor-actions button.print-editor-primary {
-		background: var(--print-editor-accent);
-		border-color: var(--print-editor-accent);
-		color: #fff;
-	}
-
-	body.print-ready .print-editor-note {
-		margin: 0;
-		padding: 10px 12px;
-		border-radius: 12px;
-		background: #f8fafc;
-		border: 1px solid rgba(148, 163, 184, 0.18);
-		font-size: 0.84rem;
-		line-height: 1.5;
-		color: #475569;
-	}
-
-	body.print-ready .print-editor-navigator {
-		display: grid;
-		grid-template-columns: 1fr auto;
-		gap: 8px 10px;
-		padding: 10px 12px;
-		border: 1px solid rgba(148, 163, 184, 0.18);
-		border-radius: 14px;
-		background: #fff;
-	}
-
-	body.print-ready .print-editor-field {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	body.print-ready .print-editor-field-label {
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: #475569;
-	}
-
-	body.print-ready .print-editor-select {
-		appearance: none;
-		border: 1px solid var(--print-editor-border);
-		border-radius: 10px;
-		padding: 9px 10px;
-		background: #fff;
-		font: inherit;
-		font-size: 0.85rem;
-		color: #111827;
-	}
-
-	body.print-ready .print-editor-secondary {
-		align-self: end;
-		border: 1px solid var(--print-editor-border);
-		background: #fff;
-		border-radius: 10px;
-		padding: 9px 12px;
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	body.print-ready .print-editor-list {
-		flex: 1;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		padding-right: 4px;
-	}
-
-	body.print-ready .print-editor-item {
-		border: 1px solid var(--print-editor-border);
-		border-radius: 14px;
-		padding: 12px;
-		background: #fff;
-	}
-
-	body.print-ready .print-editor-item.print-mode-force {
-		border-color: rgba(47, 111, 237, 0.4);
-		background: rgba(47, 111, 237, 0.05);
-	}
-
-	body.print-ready .print-editor-item.print-mode-keep {
-		border-color: rgba(148, 163, 184, 0.38);
-		background: rgba(248, 250, 252, 0.92);
-	}
-
-	body.print-ready .print-editor-item-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 8px;
-		margin-bottom: 8px;
-	}
-
-	body.print-ready .print-editor-item-label {
-		margin: 0;
-		font-size: 0.92rem;
-		font-weight: 700;
-		line-height: 1.4;
-		color: #111827;
-	}
-
-	body.print-ready .print-editor-item-meta {
-		margin: 0;
-		font-size: 0.78rem;
-		color: #6b7280;
-		line-height: 1.45;
-	}
-
-	body.print-ready .print-editor-item-jump {
-		border: none;
-		background: transparent;
-		color: var(--print-editor-accent);
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
-		padding: 0;
-		white-space: nowrap;
-	}
-
-	body.print-ready .print-editor-item-controls {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 6px;
-	}
-
-	body.print-ready .print-editor-item-controls button {
-		border: 1px solid var(--print-editor-border);
-		background: #fff;
-		border-radius: 10px;
-		padding: 8px 6px;
-		font: inherit;
-		font-size: 0.8rem;
-		font-weight: 700;
-		cursor: pointer;
-	}
-
-	body.print-ready .print-editor-item-controls button.is-active {
-		background: #111827;
-		border-color: #111827;
-		color: #fff;
-	}
-
-	body.print-ready .print-editor-target-highlight {
-		animation: print-editor-highlight 1.8s ease;
-	}
-
-	@keyframes print-editor-highlight {
-		0% { box-shadow: 0 0 0 0 rgba(47, 111, 237, 0); }
-		25% { box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.18); }
-		100% { box-shadow: 0 0 0 0 rgba(47, 111, 237, 0); }
-	}
 }
 
 body.print-ready header {
@@ -616,13 +275,14 @@ body.print-ready .print-section {
 	border-radius: 16px;
 	background:#fff;
 	box-shadow: none;
+	margin: 1.2rem 0 1.55rem;
 }
 
 body.print-ready figure.image {
 	margin: 0.95rem 0 1.2rem;
 	padding: 0.55rem;
 	border: 1px solid rgba(98, 84, 63, 0.12);
-	border-radius: 12px;
+	border-radius: 0;
 	background: #fff;
 	display:flex;
 	flex-direction:column;
@@ -638,7 +298,7 @@ body.print-ready figure.image img {
 	-webkit-user-drag: none;
 	display:block;
 	margin:0 auto;
-	border-radius: 10px;
+	border-radius: 0;
 	box-shadow: 0 4px 18px rgba(28, 28, 28, 0.08);
 }
 
@@ -694,7 +354,7 @@ body.print-ready .print-shortcut-block {
 	margin: 0.85rem 0 1.1rem;
 	padding: 0.7rem 0.8rem 0.3rem;
 	border: 1px solid rgba(98, 84, 63, 0.12);
-	border-radius: 14px;
+	border-radius: 0;
 	background: #fff;
 }
 
@@ -1118,27 +778,19 @@ body.print-ready.print-compact .print-shortcut-block {
 	border-radius: 10px;
 }
 
-	@media only print {
-	body.print-ready .print-page-dropzone,
-	body.print-ready .print-drag-handle,
-	body.print-ready .print-editor-banner,
-	body.print-ready .print-editor-launcher,
-	body.print-ready .print-editor-panel,
-	body.print-ready .print-editor-target-highlight::before {
-		display: none !important;
+@page {
+	size: A4;
+	margin: 10mm 10mm 14mm;
+	@bottom-center {
+		content: counter(page);
+		font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+		font-size: 8pt;
+		font-weight: 600;
+		color: #6c6256;
 	}
+}
 
-		@page {
-			size: A4;
-			margin: 10mm 10mm 14mm;
-			@bottom-center {
-			content: counter(page);
-			font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
-			font-size: 8pt;
-			font-weight: 600;
-			color: #6c6256;
-		}
-	}
+	@media only print {
 
 	body.print-ready.print-compact {
 		font-size: 9.4pt;
