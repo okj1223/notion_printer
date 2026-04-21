@@ -3380,6 +3380,125 @@
     return text.slice(0, 96);
   }
 
+  function parseSidebarCssPx(value) {
+    var text = String(value || '').trim();
+    if (!text) return 0;
+    if (/px$/i.test(text)) {
+      var parsed = parseFloat(text);
+      return isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+    if (!document.body) return 0;
+    var probe = document.createElement('div');
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.pointerEvents = 'none';
+    probe.style.width = text;
+    probe.style.height = '0';
+    probe.style.overflow = 'hidden';
+    document.body.appendChild(probe);
+    var pixels = probe.getBoundingClientRect ? probe.getBoundingClientRect().width : probe.offsetWidth;
+    if (probe.parentNode) {
+      probe.parentNode.removeChild(probe);
+    }
+    return isFinite(pixels) && pixels > 0 ? pixels : 0;
+  }
+
+  function sidebarPageMetrics(pageNode) {
+    var width = 0;
+    var height = 0;
+    if (pageNode && window.getComputedStyle) {
+      var style = window.getComputedStyle(pageNode);
+      var widthVars = ['--pagedjs-width', '--pagedjs-pagebox-width', '--pagedjs-width-right', '--pagedjs-width-left'];
+      var heightVars = ['--pagedjs-height', '--pagedjs-pagebox-height', '--pagedjs-height-right', '--pagedjs-height-left'];
+      if (pageNode.classList && pageNode.classList.contains('pagedjs_right_page')) {
+        widthVars = ['--pagedjs-width-right', '--pagedjs-width', '--pagedjs-pagebox-width', '--pagedjs-width-left'];
+        heightVars = ['--pagedjs-height-right', '--pagedjs-height', '--pagedjs-pagebox-height', '--pagedjs-height-left'];
+      } else if (pageNode.classList && pageNode.classList.contains('pagedjs_left_page')) {
+        widthVars = ['--pagedjs-width-left', '--pagedjs-width', '--pagedjs-pagebox-width', '--pagedjs-width-right'];
+        heightVars = ['--pagedjs-height-left', '--pagedjs-height', '--pagedjs-pagebox-height', '--pagedjs-height-right'];
+      }
+      widthVars.some(function (name) {
+        var value = parseSidebarCssPx(style.getPropertyValue(name));
+        if (!value) return false;
+        width = value;
+        return true;
+      });
+      heightVars.some(function (name) {
+        var value = parseSidebarCssPx(style.getPropertyValue(name));
+        if (!value) return false;
+        height = value;
+        return true;
+      });
+    }
+    var rect = pageNode && pageNode.getBoundingClientRect ? pageNode.getBoundingClientRect() : null;
+    return {
+      pageWidth: Math.max(1, Math.round(width || (rect && rect.width) || (pageNode && pageNode.offsetWidth) || 794)),
+      pageHeight: Math.max(1, Math.round(height || (rect && rect.height) || (pageNode && pageNode.offsetHeight) || 1123))
+    };
+  }
+
+  function sanitizePageSidebarPreview(root) {
+    if (!root || !root.nodeType || root.nodeType !== 1) return null;
+    clearEditorArtifacts(root);
+    Array.from(root.querySelectorAll('script, style, .print-page-sidebar, .print-page-sidebar-toggle, .print-editor-banner, .print-editor-panel, .print-editor-launcher, .print-image-tools, .print-image-resize-handle, .print-insert-actions, .print-page-dropzone, .print-inline-dropzone, .print-dropzone-active-indicator, .print-page-target-highlight, .print-editor-target-highlight')).forEach(function (node) {
+      node.remove();
+    });
+    Array.from([root].concat(Array.from(root.querySelectorAll('*')))).forEach(function (node) {
+      if (!node || node.nodeType !== 1) return;
+      if (node.classList) {
+        node.classList.remove('print-selected-target');
+        node.classList.remove('print-editor-target-highlight');
+        node.classList.remove('print-page-continued-top');
+        node.classList.remove('print-page-continued-bottom');
+        node.classList.remove('print-screen-page');
+      }
+      if (node.removeAttribute) {
+        node.removeAttribute('id');
+        node.removeAttribute('data-print-page-selection-bound');
+        node.removeAttribute('data-print-selection-bound');
+        node.removeAttribute('data-print-page-role');
+        node.removeAttribute('data-print-page-label');
+        node.removeAttribute('data-print-page-signature');
+        node.removeAttribute('data-print-page-anchor-persist-id');
+      }
+    });
+    root.setAttribute('aria-hidden', 'true');
+    root.style.pointerEvents = 'none';
+    return root;
+  }
+
+  function buildPageSidebarPreviewContent(pageNode) {
+    if (!pageNode || !pageNode.querySelector) return null;
+    var sourceArticle = pageNode.querySelector('article.page');
+    if (!sourceArticle || !sourceArticle.cloneNode) {
+      var fallbackRoot = renderedFlowRootForPage(pageNode);
+      if (!fallbackRoot || !fallbackRoot.cloneNode) return null;
+      var fallbackClone = fallbackRoot.cloneNode(true);
+      return sanitizePageSidebarPreview(fallbackClone);
+    }
+
+    var article = document.createElement('article');
+    article.className = 'page print-page-sidebar-preview-content';
+
+    var sourceHeader = Array.from(sourceArticle.children || []).find(function (child) {
+      return !!(child && child.matches && child.matches('header'));
+    }) || null;
+    if (sourceHeader) {
+      article.appendChild(sourceHeader.cloneNode(true));
+    }
+
+    var sourceBody = directChildByClass(sourceArticle, 'page-body');
+    if (sourceBody) {
+      article.appendChild(sourceBody.cloneNode(true));
+    } else {
+      Array.from(sourceArticle.childNodes || []).forEach(function (child) {
+        if (child === sourceHeader) return;
+        article.appendChild(child.cloneNode(true));
+      });
+    }
+    return sanitizePageSidebarPreview(article);
+  }
+
   function buildPageSidebarThumbnail(pageNode, pageNumber) {
     var thumb = document.createElement('span');
     thumb.className = 'print-page-sidebar-thumb';
@@ -3388,9 +3507,9 @@
     viewport.className = 'print-page-sidebar-thumb-viewport';
     thumb.appendChild(viewport);
 
-    var rect = pageNode.getBoundingClientRect ? pageNode.getBoundingClientRect() : null;
-    var pageWidth = Math.max(1, Math.round((rect && rect.width) || pageNode.offsetWidth || 794));
-    var pageHeight = Math.max(1, Math.round((rect && rect.height) || pageNode.offsetHeight || 1123));
+    var metrics = sidebarPageMetrics(pageNode);
+    var pageWidth = metrics.pageWidth;
+    var pageHeight = metrics.pageHeight;
     var viewportWidth = 148;
     var viewportHeight = Math.max(196, Math.round(viewportWidth * (pageHeight / pageWidth)));
     var scale = viewportWidth / pageWidth;
@@ -3405,18 +3524,15 @@
     sheet.style.pointerEvents = 'none';
     viewport.appendChild(sheet);
 
-    var clone = pageNode.cloneNode(true);
-    clone.removeAttribute('id');
-    clone.setAttribute('aria-hidden', 'true');
-    clone.classList.add('print-page-sidebar-sheet-clone');
-    clone.style.pointerEvents = 'none';
-    Array.from(clone.querySelectorAll('script, style, .print-page-sidebar, .print-page-sidebar-toggle, .print-editor-banner, .print-editor-panel, .print-editor-launcher, .print-image-tools, .print-image-resize-handle, .print-insert-actions, .print-page-dropzone, .print-inline-dropzone, .print-dropzone-active-indicator, .print-page-target-highlight, .print-editor-target-highlight')).forEach(function (node) {
-      node.remove();
-    });
-    Array.from(clone.querySelectorAll('[id]')).forEach(function (node) {
-      node.removeAttribute('id');
-    });
-    sheet.appendChild(clone);
+    var preview = document.createElement('span');
+    preview.className = 'print-page-sidebar-preview';
+    preview.style.width = pageWidth + 'px';
+    preview.style.minHeight = pageHeight + 'px';
+
+    var clone = buildPageSidebarPreviewContent(pageNode);
+    if (!clone) throw new Error('page sidebar preview content unavailable');
+    preview.appendChild(clone);
+    sheet.appendChild(preview);
     return thumb;
   }
 
@@ -6510,6 +6626,8 @@
       '  body.print-ready .print-page-sidebar-thumb{position:relative;flex:0 0 auto;width:148px;max-width:100%;background:transparent;overflow:hidden;border-radius:14px;}',
       '  body.print-ready .print-page-sidebar-thumb-viewport{position:relative;display:block;width:100%;height:100%;padding:6px;background:transparent;overflow:hidden;border-radius:14px;}',
       '  body.print-ready .print-page-sidebar-sheet{position:relative;display:block;transform-origin:top left;border-radius:12px;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.08), 0 12px 20px rgba(4,6,10,0.16);pointer-events:none;}',
+      '  body.print-ready .print-page-sidebar-preview{position:relative;display:block;width:100%;min-height:100%;background:transparent;pointer-events:none;}',
+      '  body.print-ready .print-page-sidebar-preview-content{max-width:none!important;min-height:100%;margin:0!important;border-radius:0!important;box-shadow:none!important;pointer-events:none;}',
       '  body.print-ready .print-page-sidebar-sheet .pagedjs_page, body.print-ready .print-page-sidebar-sheet article.page{margin:0!important;box-shadow:none!important;}',
       '  body.print-ready .print-page-sidebar-sheet .print-editor-banner, body.print-ready .print-page-sidebar-sheet .print-editor-panel, body.print-ready .print-page-sidebar-sheet .print-editor-launcher, body.print-ready .print-page-sidebar-sheet .print-insert-actions, body.print-ready .print-page-sidebar-sheet .print-page-dropzone, body.print-ready .print-page-sidebar-sheet .print-inline-dropzone, body.print-ready .print-page-sidebar-sheet .print-image-tools, body.print-ready .print-page-sidebar-sheet .print-image-resize-handle, body.print-ready .print-page-sidebar-sheet .print-page-target-highlight, body.print-ready .print-page-sidebar-sheet .print-editor-target-highlight{display:none!important;}',
       '  body.print-ready .print-page-sidebar-thumb-number{display:none!important;}',
