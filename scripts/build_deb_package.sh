@@ -108,6 +108,17 @@ Description: $DESCRIPTION
  It installs one team-facing GUI launcher and the integrated print pipeline.
 EOF
 
+cat >"$DEBIAN_DIR/postinst" <<'EOF'
+#!/usr/bin/env bash
+set -e
+
+echo
+echo "Notion Printer 설치 또는 업데이트가 완료되었습니다."
+echo "업데이트 후에는 컴퓨터를 다시 시작해주세요."
+echo
+EOF
+
+chmod 755 "$DEBIAN_DIR/postinst"
 chmod 755 "$APP_ROOT/notion_print_export_launcher.sh"
 
 mkdir -p "$DIST_DIR"
