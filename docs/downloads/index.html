@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Notion Printer 업데이트 노트</title>
+  <title>Notion Printer 다운로드</title>
   <style>
     :root {
       --ink: #17202f;
@@ -12,9 +12,10 @@
       --panel: #ffffff;
       --line: #d9e0e8;
       --blue: #2463eb;
-      --blue-soft: #eaf1ff;
       --green: #0f8b5f;
       --green-soft: #e8f7ef;
+      --amber: #9a6a13;
+      --amber-soft: #fff5d8;
       --shadow: 0 10px 30px rgba(23, 32, 47, 0.08);
     }
 
@@ -85,7 +86,8 @@
     .wrap { padding-top: 34px; padding-bottom: 72px; }
 
     .hero,
-    .release {
+    .release,
+    .notice {
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
@@ -102,22 +104,20 @@
     }
 
     h2 {
-      margin: 0 0 12px;
-      font-size: 24px;
-      letter-spacing: 0;
-    }
-
-    h3 {
       margin: 0 0 8px;
-      font-size: 19px;
+      font-size: 22px;
       letter-spacing: 0;
     }
 
     p { margin: 8px 0; }
 
-    .lead { color: var(--muted); font-size: 18px; max-width: 740px; }
+    .lead {
+      max-width: 740px;
+      color: var(--muted);
+      font-size: 18px;
+    }
 
-    .timeline {
+    .list {
       display: grid;
       gap: 14px;
       margin-top: 24px;
@@ -125,19 +125,22 @@
 
     .release {
       display: grid;
-      grid-template-columns: 140px minmax(0, 1fr);
+      grid-template-columns: 150px minmax(0, 1fr) auto;
       gap: 18px;
-      padding: 22px;
+      align-items: center;
+      padding: 20px;
     }
 
-    .date {
+    .meta {
       color: var(--muted);
+      font-size: 14px;
       font-weight: 800;
     }
 
     .badge {
       display: inline-flex;
       width: fit-content;
+      margin-top: 8px;
       padding: 4px 8px;
       border-radius: 8px;
       background: var(--green-soft);
@@ -146,14 +149,16 @@
       font-weight: 900;
     }
 
-    ul { margin: 12px 0 0; padding-left: 20px; }
-    li + li { margin-top: 6px; }
+    .badge.archive {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
 
     .actions {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
-      margin-top: 16px;
+      justify-content: flex-end;
     }
 
     .button {
@@ -168,12 +173,19 @@
       color: var(--blue);
       text-decoration: none;
       font-weight: 900;
+      white-space: nowrap;
     }
 
     .button.primary {
       border-color: var(--blue);
       background: var(--blue);
       color: #ffffff;
+    }
+
+    .notice {
+      margin-top: 20px;
+      padding: 18px;
+      color: var(--muted);
     }
 
     code {
@@ -185,11 +197,12 @@
       font-size: 0.94em;
     }
 
-    @media (max-width: 760px) {
+    @media (max-width: 800px) {
       .nav, .wrap { padding-left: 14px; padding-right: 14px; }
       .nav { align-items: flex-start; flex-direction: column; padding-top: 12px; padding-bottom: 12px; }
       .hero, .release { padding: 18px; }
       .release { grid-template-columns: 1fr; }
+      .actions { justify-content: flex-start; }
       h1 { font-size: 34px; }
     }
   </style>
@@ -197,51 +210,61 @@
 <body>
   <header class="site-header">
     <nav class="nav" aria-label="주요 링크">
-      <a class="brand" href="./index.html">
-        <img src="./assets/notion-printer-512.png" alt="">
+      <a class="brand" href="../index.html">
+        <img src="../assets/notion-printer-512.png" alt="">
         <span>Notion Printer</span>
       </a>
       <div class="nav-links">
-        <a href="./index.html">메인</a>
-        <a href="./team-user-guide.html">사용 가이드</a>
-        <a href="./downloads/">버전별 다운로드</a>
+        <a href="../index.html">메인</a>
+        <a href="../team-user-guide.html">사용 가이드</a>
+        <a href="../updates.html">업데이트 노트</a>
       </div>
     </nav>
   </header>
 
   <main class="wrap">
     <section class="hero">
-      <h1>업데이트 노트</h1>
+      <h1>버전별 다운로드</h1>
       <p class="lead">
-        팀에 공유한 Notion Printer 릴리즈 기록입니다. 새 버전이 나오면 최신 항목을 위에 추가하고,
-        설치 파일과 상세 리포트 링크를 함께 보관합니다.
+        최신 버전은 가장 위에 둡니다. 문제가 생겼을 때 이전 버전으로 되돌릴 수 있도록 배포한 설치 파일을 함께 보관합니다.
       </p>
     </section>
 
-    <section class="timeline" aria-label="릴리즈 목록">
+    <section class="list" aria-label="다운로드 목록">
       <article class="release">
         <div>
           <h2>v1.0.1</h2>
-          <p class="date">2026-04-24</p>
+          <p class="meta">2026-04-24 · 286,994 bytes</p>
           <span class="badge">Latest</span>
         </div>
         <div>
-          <h3>ZIP 입력과 통합 프린터 기본 흐름 정리</h3>
-          <p>HTML/ZIP 1개 또는 여러 개를 선택해 통합 출력본을 만들 수 있도록 팀 배포 흐름을 정리한 버전입니다.</p>
-          <ul>
-            <li>ZIP 단일/다중 선택과 자동 압축 해제 지원</li>
-            <li>HTML+ZIP 혼합 선택 후 통합 출력 지원</li>
-            <li>생성된 <code>*_print*.html</code> 재입력 방지</li>
-            <li>팀원용 사용 가이드와 다운로드 페이지 정리</li>
-            <li>기본 권장값: Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</li>
-          </ul>
-          <div class="actions">
-            <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>설치 파일 받기</a>
-            <a class="button" href="./update-report-v1-0-1.html">상세 리포트</a>
-            <a class="button" href="./downloads/">모든 버전</a>
-          </div>
+          <p>ZIP 입력, HTML+ZIP 혼합 통합, 팀 배포 페이지 정리를 포함한 최신 버전입니다.</p>
+          <p>설치 명령: <code>sudo apt install ./notion-printer_1.0.1_all.deb</code></p>
+        </div>
+        <div class="actions">
+          <a class="button primary" href="./notion-printer_1.0.1_all.deb" download>다운로드</a>
+          <a class="button" href="../update-report-v1-0-1.html">노트</a>
         </div>
       </article>
+
+      <article class="release">
+        <div>
+          <h2>v1.0.0</h2>
+          <p class="meta">2026-04-24 · 286,542 bytes</p>
+          <span class="badge archive">Archive</span>
+        </div>
+        <div>
+          <p>초기 팀 배포용 패키지입니다. 최신 기능이 필요하지 않거나 비교 확인이 필요할 때만 사용합니다.</p>
+          <p>설치 명령: <code>sudo apt install ./notion-printer_1.0.0_all.deb</code></p>
+        </div>
+        <div class="actions">
+          <a class="button" href="./notion-printer_1.0.0_all.deb" download>다운로드</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="notice">
+      <p>일반적으로는 최신 버전 설치를 권장합니다. 이전 버전을 설치하면 같은 패키지 이름의 기존 설치가 해당 버전으로 교체됩니다.</p>
     </section>
   </main>
 </body>
