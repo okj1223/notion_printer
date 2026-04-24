@@ -140,6 +140,17 @@
       font-size: 18px;
     }
 
+    .helper {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .helper a {
+      color: var(--blue);
+      font-weight: 800;
+    }
+
     .hero-meta {
       display: grid;
       gap: 10px;
@@ -259,17 +270,6 @@
       font-size: 13px;
     }
 
-    .download-box {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 18px;
-      align-items: center;
-      padding: 18px;
-      border: 1px solid rgba(15, 139, 95, 0.24);
-      border-radius: 8px;
-      background: var(--green-soft);
-    }
-
     code {
       padding: 2px 6px;
       border-radius: 6px;
@@ -339,7 +339,6 @@
 
     @media (max-width: 860px) {
       .hero,
-      .download-box,
       .release {
         grid-template-columns: 1fr;
       }
@@ -365,7 +364,7 @@
       <div class="nav-links">
         <a href="./team-user-guide.html">사용 가이드</a>
         <a href="./updates.html">업데이트 노트</a>
-        <a href="./downloads/">버전별 다운로드</a>
+        <a href="./downloads/">다운로드 보관함</a>
       </div>
     </nav>
   </header>
@@ -380,10 +379,10 @@
           여러 문서를 한 권처럼 합친 뒤 브라우저 미리보기와 인쇄용 HTML을 생성합니다.
         </p>
         <div class="actions">
-          <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>최신 버전 다운로드</a>
-          <a class="button" href="./team-user-guide.html">사용 가이드 보기</a>
-          <a class="button" href="./downloads/">버전별 다운로드</a>
+          <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>최신 설치 파일 받기</a>
+          <a class="button" href="./team-user-guide.html">처음 사용하는 방법</a>
         </div>
+        <p class="helper">이전 버전은 <a href="./downloads/">다운로드 보관함</a>에 따로 모아두었습니다.</p>
       </div>
 
       <aside class="hero-meta" aria-label="최신 버전 정보">
@@ -439,21 +438,6 @@
       </div>
     </section>
 
-    <section class="section" id="download">
-      <h2>최신 버전 다운로드</h2>
-      <div class="download-box">
-        <div>
-          <h3>Notion Printer v1.0.1</h3>
-          <p>팀 배포용 Ubuntu 패키지입니다. 기존 버전이 설치되어 있어도 같은 명령으로 업데이트할 수 있습니다.</p>
-          <p>터미널 설치: <code>sudo apt install ./notion-printer_1.0.1_all.deb</code></p>
-        </div>
-        <div class="actions">
-          <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>다운로드</a>
-          <a class="button" href="./downloads/">모든 버전 보기</a>
-        </div>
-      </div>
-    </section>
-
     <section class="section" id="updates">
       <h2>업데이트 노트</h2>
       <p class="lead">새 버전이 나올 때마다 이 목록에 누적합니다. 최신 버전은 항상 가장 위에 둡니다.</p>
@@ -481,7 +465,7 @@
       <ul class="link-list">
         <li><a href="./team-user-guide.html">팀원 사용 가이드 <span>설치, 파일 선택, 미리보기 편집, 문제 해결</span></a></li>
         <li><a href="./update-report-v1-0-1.html">v1.0.1 업데이트 리포트 <span>이번 버전에서 달라진 점</span></a></li>
-        <li><a href="./downloads/">버전별 다운로드 <span>최신 버전과 이전 배포 파일 보관</span></a></li>
+        <li><a href="./downloads/">다운로드 보관함 <span>이전 버전이 필요할 때만 사용</span></a></li>
       </ul>
     </section>
 
