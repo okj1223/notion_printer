@@ -6,15 +6,17 @@
   <title>Notion Printer</title>
   <style>
     :root {
-      --ink: #17202f;
-      --muted: #596678;
-      --paper: #f6f7f9;
+      --ink: #1f2937;
+      --muted: #667085;
+      --paper: #f8fafc;
       --panel: #ffffff;
       --line: #d9e0e8;
       --blue: #2463eb;
       --blue-soft: #eaf1ff;
       --green: #0f8b5f;
       --green-soft: #e8f7ef;
+      --coral: #c65f45;
+      --coral-soft: #fff0ea;
       --amber: #9a6a13;
       --amber-soft: #fff5d8;
       --slate: #334155;
@@ -97,7 +99,7 @@
       padding: 34px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: var(--panel);
+      background: #ffffff;
       box-shadow: var(--shadow);
     }
 
@@ -211,6 +213,11 @@
       color: #ffffff;
     }
 
+    .button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(36, 99, 235, 0.10);
+    }
+
     .section {
       margin-top: 24px;
       padding: 28px;
@@ -218,6 +225,11 @@
       border-radius: 8px;
       background: var(--panel);
       box-shadow: 0 6px 20px rgba(23, 32, 47, 0.05);
+    }
+
+    .section.warm {
+      border-color: rgba(198, 95, 69, 0.18);
+      background: var(--coral-soft);
     }
 
     .grid {
@@ -233,6 +245,14 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #ffffff;
+    }
+
+    .card:nth-child(2) {
+      background: #fbfff8;
+    }
+
+    .card:nth-child(3) {
+      background: #fffaf5;
     }
 
     .card p,
@@ -362,9 +382,9 @@
         <span>Notion Printer</span>
       </a>
       <div class="nav-links">
-        <a href="./team-user-guide.html">사용 가이드</a>
-        <a href="./updates.html">업데이트 노트</a>
-        <a href="./downloads/">다운로드 보관함</a>
+        <a href="./team-user-guide.html">처음 쓰는 법</a>
+        <a href="./updates.html">업데이트</a>
+        <a href="./downloads/">이전 버전</a>
       </div>
     </nav>
   </header>
@@ -372,17 +392,17 @@
   <main class="wrap">
     <section class="hero">
       <div>
-        <span class="eyebrow">팀 배포용 Notion 출력 도구</span>
-        <h1>Notion export를 인쇄하기 좋은 통합 문서로 바꿉니다.</h1>
+        <span class="eyebrow">팀에서 같이 쓰는 Notion 출력 도우미</span>
+        <h1>Notion export, 인쇄 준비까지 한 번에 끝내요.</h1>
         <p class="lead">
-          Notion에서 내려받은 HTML 또는 ZIP을 선택하면 Notion Printer가 이미지 경로를 정리하고,
-          여러 문서를 한 권처럼 합친 뒤 브라우저 미리보기와 인쇄용 HTML을 생성합니다.
+          HTML이나 ZIP을 고르면 Notion Printer가 이미지 경로를 정리하고,
+          여러 문서를 한 권처럼 묶은 뒤 바로 확인할 수 있는 인쇄 미리보기를 만들어줍니다.
         </p>
         <div class="actions">
           <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>최신 설치 파일 받기</a>
-          <a class="button" href="./team-user-guide.html">처음 사용하는 방법</a>
+          <a class="button" href="./team-user-guide.html">처음 쓰는 법 보기</a>
         </div>
-        <p class="helper">이전 버전은 <a href="./downloads/">다운로드 보관함</a>에 따로 모아두었습니다.</p>
+        <p class="helper">이전 버전은 <a href="./downloads/">보관함</a>에 따로 모아두었습니다.</p>
       </div>
 
       <aside class="hero-meta" aria-label="최신 버전 정보">
@@ -394,31 +414,31 @@
           </div>
         </div>
         <p><strong>설치 파일</strong><br><code>notion-printer_1.0.1_all.deb</code></p>
-        <p><strong>권장 기본값</strong><br>Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</p>
-        <p><strong>업데이트 후 안내</strong><br>컴퓨터를 다시 시작해주세요.</p>
+        <p><strong>그대로 써도 좋은 기본값</strong><br>Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</p>
+        <p><strong>설치가 끝나면</strong><br>컴퓨터를 다시 시작해주세요.</p>
       </aside>
     </section>
 
-    <section class="section" id="what">
-      <h2>무엇을 해결하나요?</h2>
+    <section class="section warm" id="what">
+      <h2>이럴 때 쓰면 좋아요</h2>
       <div class="grid">
         <article class="card">
-          <h3>ZIP 그대로 선택</h3>
-          <p>압축을 풀고 HTML과 이미지 폴더를 따로 찾는 과정을 줄입니다.</p>
+          <h3>ZIP을 풀지 않아도 돼요</h3>
+          <p>Notion에서 받은 ZIP을 그대로 선택하면 원본 HTML과 이미지 구조를 같이 챙깁니다.</p>
         </article>
         <article class="card">
-          <h3>여러 문서 자동 통합</h3>
-          <p>HTML 여러 개, ZIP 여러 개, HTML+ZIP 혼합 입력을 한 출력본으로 묶습니다.</p>
+          <h3>여러 문서를 한 권으로</h3>
+          <p>HTML 여러 개, ZIP 여러 개, HTML+ZIP 혼합 입력도 선택한 순서대로 묶습니다.</p>
         </article>
         <article class="card">
-          <h3>출력 전 미리보기 편집</h3>
+          <h3>마지막 손질은 미리보기에서</h3>
           <p>페이지 시작 위치, 앞 페이지 붙이기, 이미지 크기 조절을 브라우저에서 바로 합니다.</p>
         </article>
       </div>
     </section>
 
     <section class="section" id="workflow">
-      <h2>기본 사용 흐름</h2>
+      <h2>처음 쓰는 순서</h2>
       <div class="workflow">
         <article class="step">
           <h3>앱 실행</h3>
@@ -426,22 +446,22 @@
         </article>
         <article class="step">
           <h3>파일 선택</h3>
-          <p>Notion export HTML 또는 ZIP을 1개 이상 선택합니다.</p>
+          <p>Notion export HTML 또는 ZIP을 하나 이상 고릅니다.</p>
         </article>
         <article class="step">
           <h3>옵션 확인</h3>
-          <p>기본값은 Compact + Fast, 목차 끄기, 쪽번호 켜기입니다.</p>
+          <p>처음에는 기본값 그대로 시작해도 괜찮습니다.</p>
         </article>
         <article class="step">
           <h3>미리보기/인쇄</h3>
-          <p>브라우저 미리보기에서 다듬고 PDF 저장 또는 실제 인쇄를 진행합니다.</p>
+          <p>미리보기에서 다듬고 PDF 저장 또는 실제 인쇄를 진행합니다.</p>
         </article>
       </div>
     </section>
 
     <section class="section" id="updates">
-      <h2>업데이트 노트</h2>
-      <p class="lead">새 버전이 나올 때마다 이 목록에 누적합니다. 최신 버전은 항상 가장 위에 둡니다.</p>
+      <h2>최근 업데이트</h2>
+      <p class="lead">무엇이 바뀌었는지 짧게 남겨둡니다. 새 버전은 항상 가장 위에 추가합니다.</p>
       <div class="timeline">
         <article class="release">
           <div>
@@ -450,23 +470,23 @@
           </div>
           <div>
             <span class="tag">Latest</span>
-            <h3>ZIP 입력, 다중 통합, 팀 배포 패키지 정리</h3>
-            <p>HTML/ZIP 선택 흐름을 통합하고, 이미지 경로 처리와 팀원 가이드를 보강했습니다.</p>
+            <h3>ZIP 입력과 여러 문서 통합을 더 편하게</h3>
+            <p>HTML/ZIP 선택 흐름을 정리하고, 이미지 경로 처리와 팀원 가이드를 보강했습니다.</p>
           </div>
           <a class="button" href="./update-report-v1-0-1.html">자세히</a>
         </article>
       </div>
       <div class="actions">
-        <a class="button" href="./updates.html">업데이트 노트 전체 보기</a>
+        <a class="button" href="./updates.html">업데이트 더 보기</a>
       </div>
     </section>
 
     <section class="section" id="links">
-      <h2>운영 링크</h2>
+      <h2>필요할 때 열어보세요</h2>
       <ul class="link-list">
-        <li><a href="./team-user-guide.html">팀원 사용 가이드 <span>설치, 파일 선택, 미리보기 편집, 문제 해결</span></a></li>
+        <li><a href="./team-user-guide.html">처음 쓰는 법 <span>설치, 파일 선택, 미리보기 편집, 문제 해결</span></a></li>
         <li><a href="./update-report-v1-0-1.html">v1.0.1 업데이트 리포트 <span>이번 버전에서 달라진 점</span></a></li>
-        <li><a href="./downloads/">다운로드 보관함 <span>이전 버전이 필요할 때만 사용</span></a></li>
+        <li><a href="./downloads/">이전 버전 보관함 <span>되돌리거나 비교해야 할 때만 사용</span></a></li>
       </ul>
     </section>
 
