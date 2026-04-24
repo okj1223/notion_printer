@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notion Printer Pages</title>
+  <style>
+    :root {
+      --ink: #173047;
+      --muted: #61748a;
+      --paper: #f7fbff;
+      --card: #ffffff;
+      --line: #dae7f3;
+      --blue: #2f80ed;
+      --blue-soft: #eaf3ff;
+      --green: #119a72;
+      --green-soft: #e8f8f1;
+      --shadow: 0 18px 44px rgba(24, 49, 74, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(47, 128, 237, 0.12), transparent 30%),
+        radial-gradient(circle at top right, rgba(17, 154, 114, 0.10), transparent 28%),
+        linear-gradient(180deg, #fbfdff 0%, #f4f9fd 100%);
+      font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Pretendard", sans-serif;
+    }
+
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 20px 72px;
+    }
+
+    .hero,
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      padding: 34px;
+      background: linear-gradient(135deg, #ffffff 0%, #eef6ff 60%, #f3fff9 100%);
+    }
+
+    .section {
+      margin-top: 22px;
+      padding: 24px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      margin: 16px 0 10px;
+      font-size: clamp(34px, 5vw, 56px);
+      line-height: 1.05;
+      letter-spacing: -0.05em;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 26px;
+      letter-spacing: -0.03em;
+    }
+
+    p {
+      margin: 8px 0;
+      line-height: 1.68;
+    }
+
+    .lead {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--card);
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .card span {
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 13px 18px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 800;
+      border: 1px solid transparent;
+    }
+
+    .button.primary {
+      background: var(--blue);
+      color: #ffffff;
+    }
+
+    .button.secondary {
+      background: #ffffff;
+      color: var(--blue);
+      border-color: rgba(47, 128, 237, 0.20);
+    }
+
+    .callout {
+      margin-top: 16px;
+      padding: 15px 17px;
+      border-radius: 18px;
+      border: 1px solid rgba(17, 154, 114, 0.18);
+      background: var(--green-soft);
+      color: #0c7a5a;
+    }
+
+    ul {
+      margin: 14px 0 0;
+      padding-left: 20px;
+      line-height: 1.7;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 7px;
+      background: #eef4fb;
+      color: #22415f;
+      font-family: "JetBrains Mono", "D2Coding", monospace;
+      font-size: 0.94em;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 22px 14px 42px;
+      }
+
+      .hero,
+      .section {
+        padding: 20px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <span class="badge">GitHub Pages 배포용</span>
+      <h1>Notion Printer 1.0.1</h1>
+      <p class="lead">
+        팀원은 이 페이지에서 업데이트 리포트를 읽고, 사용자 가이드를 확인하고,
+        설치 파일 <code>.deb</code>까지 바로 내려받을 수 있습니다.
+      </p>
+
+      <div class="grid">
+        <div class="card">
+          <strong>업데이트 리포트</strong>
+          <span>이번 버전에서 달라진 점을 한눈에 확인</span>
+        </div>
+        <div class="card">
+          <strong>사용 가이드</strong>
+          <span>설치와 사용 방법을 HTML 한 파일로 정리</span>
+        </div>
+        <div class="card">
+          <strong>설치 파일</strong>
+          <span><code>notion-printer_1.0.1_all.deb</code></span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="button primary" href="./update-report-v1-0-1.html">업데이트 리포트 보기</a>
+        <a class="button secondary" href="./team-user-guide.html">사용 가이드 보기</a>
+        <a class="button secondary" href="./downloads/notion-printer_1.0.1_all.deb" download>1.0.1 설치 파일 받기</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>노션에 넣을 링크</h2>
+      <ul>
+        <li>메인 페이지: <code>https://okj1223.github.io/notion_printer/</code></li>
+        <li>업데이트 리포트: <code>https://okj1223.github.io/notion_printer/update-report-v1-0-1.html</code></li>
+        <li>사용 가이드: <code>https://okj1223.github.io/notion_printer/team-user-guide.html</code></li>
+        <li>설치 파일: <code>https://okj1223.github.io/notion_printer/downloads/notion-printer_1.0.1_all.deb</code></li>
+      </ul>
+      <div class="callout">
+        GitHub 저장소에서 Pages를 <code>main</code> 브랜치의 <code>/docs</code> 폴더로 켜면 위 링크 형식으로 바로 사용할 수 있습니다.
+      </div>
+    </section>
+  </main>
+</body>
+</html>
