@@ -373,8 +373,9 @@
       .hero, .section { padding: 20px; }
     }
   </style>
+  <link rel="stylesheet" href="./assets/site.css">
 </head>
-<body>
+<body class="home-page">
   <header class="site-header">
     <nav class="nav" aria-label="주요 링크">
       <a class="brand" href="./index.html">
@@ -405,17 +406,34 @@
         <p class="helper">이전 버전은 <a href="./downloads/">보관함</a>에 따로 모아두었습니다.</p>
       </div>
 
-      <aside class="hero-meta" aria-label="최신 버전 정보">
-        <div class="version">
+      <aside class="app-preview" aria-label="Notion Printer 흐름 미리보기">
+        <div class="preview-title">
           <img src="./assets/notion-printer-512.png" alt="Notion Printer 아이콘">
           <div>
-            <strong>v1.0.1</strong>
-            <span>2026-04-24 배포</span>
+            <strong>Notion Printer</strong>
+            <span>v1.0.1 · 2026-04-24 배포</span>
           </div>
         </div>
-        <p><strong>설치 파일</strong><br><code>notion-printer_1.0.1_all.deb</code></p>
-        <p><strong>그대로 써도 좋은 기본값</strong><br>Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</p>
-        <p><strong>설치가 끝나면</strong><br>컴퓨터를 다시 시작해주세요.</p>
+        <div class="preview-dropzone">
+          <div class="file-row">
+            <span class="file-pill">.zip</span>
+            <span class="file-pill">.html</span>
+            <span class="file-pill">multiple files</span>
+          </div>
+          <strong>Notion export를 그대로 고르기</strong>
+          <p>ZIP을 풀어 헤매지 않아도 이미지와 첨부 구조까지 같이 챙깁니다.</p>
+        </div>
+        <div class="preview-flow">
+          <div class="preview-step">
+            <strong>권장 기본값</strong>
+            <p>Compact Print, Fast Preview, 목차 끄기, 쪽번호 켜기</p>
+          </div>
+          <div class="preview-output">
+            <strong>바로 확인</strong>
+            <p>브라우저 미리보기에서 페이지 나눔과 이미지 크기를 다듬습니다.</p>
+          </div>
+        </div>
+        <p class="preview-restart">업데이트 후에는 컴퓨터를 다시 시작해주세요.</p>
       </aside>
     </section>
 
