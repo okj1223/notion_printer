@@ -2,9 +2,10 @@
 Type=Application
 Version=1.0
 Name=Notion Printer Advanced
-Comment=Open the advanced Notion Printer options
-Exec=sh -c 'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; "$SCRIPT_DIR/notion_print_export_launcher.sh" --advanced "${1:-}"' %k %f
+Comment=Open the advanced integrated Notion Printer options
+Exec=sh -c 'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; "$SCRIPT_DIR/notion_print_export_launcher.sh" --advanced "$@"' %k %F
 Terminal=false
+MimeType=text/html;application/zip;application/x-zip;application/x-zip-compressed;
 Categories=Utility;
-Icon=printer
+Icon=notion-printer
 StartupNotify=true

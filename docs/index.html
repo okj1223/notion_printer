@@ -3,86 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Notion Printer Pages</title>
+  <title>Notion Printer</title>
   <style>
     :root {
-      --ink: #173047;
-      --muted: #61748a;
-      --paper: #f7fbff;
-      --card: #ffffff;
-      --line: #dae7f3;
-      --blue: #2f80ed;
-      --blue-soft: #eaf3ff;
-      --green: #119a72;
-      --green-soft: #e8f8f1;
-      --shadow: 0 18px 44px rgba(24, 49, 74, 0.10);
+      --ink: #17202f;
+      --muted: #596678;
+      --paper: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9e0e8;
+      --blue: #2463eb;
+      --blue-soft: #eaf1ff;
+      --green: #0f8b5f;
+      --green-soft: #e8f7ef;
+      --amber: #9a6a13;
+      --amber-soft: #fff5d8;
+      --slate: #334155;
+      --shadow: 0 10px 30px rgba(23, 32, 47, 0.08);
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
+      background: var(--paper);
       color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(47, 128, 237, 0.12), transparent 30%),
-        radial-gradient(circle at top right, rgba(17, 154, 114, 0.10), transparent 28%),
-        linear-gradient(180deg, #fbfdff 0%, #f4f9fd 100%);
       font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Pretendard", sans-serif;
+      line-height: 1.65;
     }
 
-    .page {
-      max-width: 980px;
+    a { color: inherit; }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(10px);
+    }
+
+    .nav {
+      max-width: 1120px;
       margin: 0 auto;
-      padding: 40px 20px 72px;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
     }
 
-    .hero,
-    .section {
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      background: rgba(255, 255, 255, 0.9);
-      box-shadow: var(--shadow);
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      text-decoration: none;
+    }
+
+    .brand img {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      padding: 6px 8px;
+      border-radius: 8px;
+    }
+
+    .nav-links a:hover { background: #eef2f7; color: var(--ink); }
+
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 20px 72px;
     }
 
     .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.75fr);
+      gap: 24px;
+      align-items: stretch;
       padding: 34px;
-      background: linear-gradient(135deg, #ffffff 0%, #eef6ff 60%, #f3fff9 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
     }
 
-    .section {
-      margin-top: 22px;
-      padding: 24px;
-    }
-
-    .badge {
+    .eyebrow {
       display: inline-flex;
       align-items: center;
-      padding: 7px 12px;
-      border-radius: 999px;
+      width: fit-content;
+      padding: 4px 9px;
+      border-radius: 8px;
       background: var(--blue-soft);
       color: var(--blue);
       font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.02em;
+      font-weight: 900;
     }
 
     h1 {
-      margin: 16px 0 10px;
-      font-size: clamp(34px, 5vw, 56px);
-      line-height: 1.05;
-      letter-spacing: -0.05em;
+      margin: 14px 0 12px;
+      font-size: 48px;
+      line-height: 1.08;
+      letter-spacing: 0;
     }
 
     h2 {
       margin: 0 0 12px;
-      font-size: 26px;
-      letter-spacing: -0.03em;
+      font-size: 25px;
+      letter-spacing: 0;
     }
 
-    p {
-      margin: 8px 0;
-      line-height: 1.68;
+    h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
     }
+
+    p { margin: 8px 0; }
 
     .lead {
       max-width: 760px;
@@ -90,33 +140,43 @@
       font-size: 18px;
     }
 
-    .grid {
+    .hero-meta {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-      margin-top: 24px;
-    }
-
-    .card {
-      padding: 18px;
-      border-radius: 22px;
+      gap: 10px;
+      align-content: start;
+      padding: 20px;
       border: 1px solid var(--line);
-      background: var(--card);
+      border-radius: 8px;
+      background: #fbfcfe;
     }
 
-    .card strong {
+    .version {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .version img {
+      width: 56px;
+      height: 56px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+
+    .version strong {
       display: block;
-      margin-bottom: 6px;
+      font-size: 20px;
     }
 
-    .card span {
+    .version span {
       color: var(--muted);
+      font-size: 14px;
     }
 
     .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 10px;
       margin-top: 22px;
     }
 
@@ -124,108 +184,307 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 13px 18px;
-      border-radius: 14px;
+      min-height: 44px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--blue);
       text-decoration: none;
-      font-weight: 800;
-      border: 1px solid transparent;
+      font-weight: 900;
     }
 
     .button.primary {
+      border-color: var(--blue);
       background: var(--blue);
       color: #ffffff;
     }
 
-    .button.secondary {
-      background: #ffffff;
-      color: var(--blue);
-      border-color: rgba(47, 128, 237, 0.20);
+    .section {
+      margin-top: 24px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 6px 20px rgba(23, 32, 47, 0.05);
     }
 
-    .callout {
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
       margin-top: 16px;
-      padding: 15px 17px;
-      border-radius: 18px;
-      border: 1px solid rgba(17, 154, 114, 0.18);
-      background: var(--green-soft);
-      color: #0c7a5a;
     }
 
-    ul {
-      margin: 14px 0 0;
-      padding-left: 20px;
-      line-height: 1.7;
+    .card {
+      min-height: 132px;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .card p,
+    .timeline p {
+      color: var(--muted);
+    }
+
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+      counter-reset: flow;
+    }
+
+    .step {
+      counter-increment: flow;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .step::before {
+      content: counter(flow);
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      background: var(--slate);
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 13px;
+    }
+
+    .download-box {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 18px;
+      border: 1px solid rgba(15, 139, 95, 0.24);
+      border-radius: 8px;
+      background: var(--green-soft);
     }
 
     code {
       padding: 2px 6px;
-      border-radius: 7px;
-      background: #eef4fb;
-      color: #22415f;
+      border-radius: 6px;
+      background: #eef2f7;
+      color: #1e293b;
       font-family: "JetBrains Mono", "D2Coding", monospace;
       font-size: 0.94em;
     }
 
-    @media (max-width: 760px) {
-      .page {
-        padding: 22px 14px 42px;
-      }
+    .timeline {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
 
+    .release {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .tag {
+      width: fit-content;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .link-list {
+      display: grid;
+      gap: 9px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .link-list a {
+      display: block;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    .link-list span {
+      display: block;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 860px) {
       .hero,
-      .section {
-        padding: 20px;
-      }
-
-      .grid {
+      .download-box,
+      .release {
         grid-template-columns: 1fr;
       }
+
+      .grid,
+      .workflow {
+        grid-template-columns: 1fr;
+      }
+
+      h1 { font-size: 36px; }
+      .wrap { padding: 20px 14px 48px; }
+      .hero, .section { padding: 20px; }
     }
   </style>
 </head>
 <body>
-  <main class="page">
+  <header class="site-header">
+    <nav class="nav" aria-label="주요 링크">
+      <a class="brand" href="./index.html">
+        <img src="./assets/notion-printer-512.png" alt="">
+        <span>Notion Printer</span>
+      </a>
+      <div class="nav-links">
+        <a href="./team-user-guide.html">사용 가이드</a>
+        <a href="./updates.html">업데이트 노트</a>
+        <a href="./downloads/notion-printer_1.0.1_all.deb">다운로드</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap">
     <section class="hero">
-      <span class="badge">GitHub Pages 배포용</span>
-      <h1>Notion Printer 1.0.1</h1>
-      <p class="lead">
-        팀원은 이 페이지에서 업데이트 리포트를 읽고, 사용자 가이드를 확인하고,
-        설치 파일 <code>.deb</code>까지 바로 내려받을 수 있습니다.
-      </p>
+      <div>
+        <span class="eyebrow">팀 배포용 Notion 출력 도구</span>
+        <h1>Notion export를 인쇄하기 좋은 통합 문서로 바꿉니다.</h1>
+        <p class="lead">
+          Notion에서 내려받은 HTML 또는 ZIP을 선택하면 Notion Printer가 이미지 경로를 정리하고,
+          여러 문서를 한 권처럼 합친 뒤 브라우저 미리보기와 인쇄용 HTML을 생성합니다.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>최신 버전 다운로드</a>
+          <a class="button" href="./team-user-guide.html">사용 가이드 보기</a>
+          <a class="button" href="./update-report-v1-0-1.html">1.0.1 업데이트 보기</a>
+        </div>
+      </div>
 
+      <aside class="hero-meta" aria-label="최신 버전 정보">
+        <div class="version">
+          <img src="./assets/notion-printer-512.png" alt="Notion Printer 아이콘">
+          <div>
+            <strong>v1.0.1</strong>
+            <span>2026-04-24 배포</span>
+          </div>
+        </div>
+        <p><strong>설치 파일</strong><br><code>notion-printer_1.0.1_all.deb</code></p>
+        <p><strong>권장 기본값</strong><br>Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</p>
+      </aside>
+    </section>
+
+    <section class="section" id="what">
+      <h2>무엇을 해결하나요?</h2>
       <div class="grid">
-        <div class="card">
-          <strong>업데이트 리포트</strong>
-          <span>이번 버전에서 달라진 점을 한눈에 확인</span>
-        </div>
-        <div class="card">
-          <strong>사용 가이드</strong>
-          <span>설치와 사용 방법을 HTML 한 파일로 정리</span>
-        </div>
-        <div class="card">
-          <strong>설치 파일</strong>
-          <span><code>notion-printer_1.0.1_all.deb</code></span>
-        </div>
+        <article class="card">
+          <h3>ZIP 그대로 선택</h3>
+          <p>압축을 풀고 HTML과 이미지 폴더를 따로 찾는 과정을 줄입니다.</p>
+        </article>
+        <article class="card">
+          <h3>여러 문서 자동 통합</h3>
+          <p>HTML 여러 개, ZIP 여러 개, HTML+ZIP 혼합 입력을 한 출력본으로 묶습니다.</p>
+        </article>
+        <article class="card">
+          <h3>출력 전 미리보기 편집</h3>
+          <p>페이지 시작 위치, 앞 페이지 붙이기, 이미지 크기 조절을 브라우저에서 바로 합니다.</p>
+        </article>
       </div>
+    </section>
 
+    <section class="section" id="workflow">
+      <h2>기본 사용 흐름</h2>
+      <div class="workflow">
+        <article class="step">
+          <h3>앱 실행</h3>
+          <p>Ubuntu 앱 메뉴에서 <code>Notion Printer</code>를 엽니다.</p>
+        </article>
+        <article class="step">
+          <h3>파일 선택</h3>
+          <p>Notion export HTML 또는 ZIP을 1개 이상 선택합니다.</p>
+        </article>
+        <article class="step">
+          <h3>옵션 확인</h3>
+          <p>기본값은 Compact + Fast, 목차 끄기, 쪽번호 켜기입니다.</p>
+        </article>
+        <article class="step">
+          <h3>미리보기/인쇄</h3>
+          <p>브라우저 미리보기에서 다듬고 PDF 저장 또는 실제 인쇄를 진행합니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="download">
+      <h2>최신 버전 다운로드</h2>
+      <div class="download-box">
+        <div>
+          <h3>Notion Printer v1.0.1</h3>
+          <p>팀 배포용 Ubuntu 패키지입니다. 기존 버전이 설치되어 있어도 같은 명령으로 업데이트할 수 있습니다.</p>
+          <p>터미널 설치: <code>sudo apt install ./notion-printer_1.0.1_all.deb</code></p>
+        </div>
+        <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>다운로드</a>
+      </div>
+    </section>
+
+    <section class="section" id="updates">
+      <h2>업데이트 노트</h2>
+      <p class="lead">새 버전이 나올 때마다 이 목록에 누적합니다. 최신 버전은 항상 가장 위에 둡니다.</p>
+      <div class="timeline">
+        <article class="release">
+          <div>
+            <strong>v1.0.1</strong>
+            <p>2026-04-24</p>
+          </div>
+          <div>
+            <span class="tag">Latest</span>
+            <h3>ZIP 입력, 다중 통합, 팀 배포 패키지 정리</h3>
+            <p>HTML/ZIP 선택 흐름을 통합하고, 이미지 경로 처리와 팀원 가이드를 보강했습니다.</p>
+          </div>
+          <a class="button" href="./update-report-v1-0-1.html">자세히</a>
+        </article>
+      </div>
       <div class="actions">
-        <a class="button primary" href="./update-report-v1-0-1.html">업데이트 리포트 보기</a>
-        <a class="button secondary" href="./team-user-guide.html">사용 가이드 보기</a>
-        <a class="button secondary" href="./downloads/notion-printer_1.0.1_all.deb" download>1.0.1 설치 파일 받기</a>
+        <a class="button" href="./updates.html">업데이트 노트 전체 보기</a>
       </div>
     </section>
 
-    <section class="section">
-      <h2>노션에 넣을 링크</h2>
-      <ul>
-        <li>메인 페이지: <code>https://okj1223.github.io/notion_printer/</code></li>
-        <li>업데이트 리포트: <code>https://okj1223.github.io/notion_printer/update-report-v1-0-1.html</code></li>
-        <li>사용 가이드: <code>https://okj1223.github.io/notion_printer/team-user-guide.html</code></li>
-        <li>설치 파일: <code>https://okj1223.github.io/notion_printer/downloads/notion-printer_1.0.1_all.deb</code></li>
+    <section class="section" id="links">
+      <h2>운영 링크</h2>
+      <ul class="link-list">
+        <li><a href="./team-user-guide.html">팀원 사용 가이드 <span>설치, 파일 선택, 미리보기 편집, 문제 해결</span></a></li>
+        <li><a href="./update-report-v1-0-1.html">v1.0.1 업데이트 리포트 <span>이번 버전에서 달라진 점</span></a></li>
+        <li><a href="./downloads/notion-printer_1.0.1_all.deb">최신 설치 파일 <span>Ubuntu용 .deb 패키지</span></a></li>
       </ul>
-      <div class="callout">
-        GitHub 저장소에서 Pages를 <code>main</code> 브랜치의 <code>/docs</code> 폴더로 켜면 위 링크 형식으로 바로 사용할 수 있습니다.
-      </div>
     </section>
+
+    <p class="footer">
+      GitHub Pages: <code>https://okj1223.github.io/notion_printer/</code>
+    </p>
   </main>
 </body>
 </html>

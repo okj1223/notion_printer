@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html as html_lib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,11 +14,29 @@ from typing import Iterable
 SCHEMA_VERSION = 1
 GENERATOR_VERSION = "learning-mvp-1"
 PROJECT_DIR = Path(__file__).resolve().parent
-LEARNING_DATA_DIR = PROJECT_DIR / "learning_data"
+ENV_LEARNING_DATA_DIR = os.environ.get("NOTION_PRINTER_DATA_DIR", "").strip()
+USER_DATA_ROOT = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")).expanduser() / "notion-printer"
 
 TAG_RE = re.compile(r"<[^>]+>")
 WHITESPACE_RE = re.compile(r"\s+")
 NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def resolve_learning_data_dir() -> Path:
+    if ENV_LEARNING_DATA_DIR:
+        return Path(ENV_LEARNING_DATA_DIR).expanduser().resolve()
+
+    project_data_dir = PROJECT_DIR / "learning_data"
+    try:
+        if os.access(PROJECT_DIR, os.W_OK):
+            return project_data_dir
+    except Exception:
+        pass
+
+    return (USER_DATA_ROOT / "learning_data").resolve()
+
+
+LEARNING_DATA_DIR = resolve_learning_data_dir()
 
 
 def utc_now_iso() -> str:

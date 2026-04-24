@@ -120,7 +120,17 @@ def safe_slug(value: str) -> str:
     return slug or "document"
 
 
-def is_source_html(path: Path, output_root: Path, match_text: str | None) -> bool:
+def path_within_generated_subdir(path: Path, source_root: Path) -> bool:
+    resolved_path = path.resolve()
+    resolved_root = source_root.resolve()
+    try:
+        relative_parent = resolved_path.parent.relative_to(resolved_root)
+    except ValueError:
+        return False
+    return any(part.startswith("_notion_printer_") or part.startswith("_runs") for part in relative_parent.parts)
+
+
+def is_source_html(path: Path, source_root: Path, output_root: Path, match_text: str | None) -> bool:
     if not path.is_file():
         return False
     if path.suffix.lower() != ".html":
@@ -129,13 +139,15 @@ def is_source_html(path: Path, output_root: Path, match_text: str | None) -> boo
         return False
     if output_root in path.parents:
         return False
+    if path_within_generated_subdir(path, source_root):
+        return False
     if match_text and match_text.lower() not in path.name.lower():
         return False
     return True
 
 
 def discover_sources(source_root: Path, output_root: Path, match_text: str | None) -> list[Path]:
-    return sorted(path for path in source_root.rglob("*.html") if is_source_html(path, output_root, match_text))
+    return sorted(path for path in source_root.rglob("*.html") if is_source_html(path, source_root, output_root, match_text))
 
 
 def choose_sources(candidates: list[Path], count: int, seed: int) -> list[Path]:

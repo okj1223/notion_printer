@@ -4,6 +4,14 @@ body.print-ready {
 	line-height:1.68;
 	white-space:normal;
 	background:#fff;
+	--print-page-width: 210mm;
+	--print-page-height: 297mm;
+	--print-page-margin-top: 14mm;
+	--print-page-margin-right: 14mm;
+	--print-page-margin-bottom: 18mm;
+	--print-page-margin-left: 14mm;
+	--print-content-width: calc(var(--print-page-width) - var(--print-page-margin-left) - var(--print-page-margin-right));
+	--print-content-height: calc(var(--print-page-height) - var(--print-page-margin-top) - var(--print-page-margin-bottom));
 	--print-indent-step: 1.35rem;
 	--print-nested-indent-step: 1.25rem;
 	--print-bullet-gutter: 0.9rem;
@@ -25,6 +33,26 @@ body.print-ready {
 	--print-left-rail: 0px;
 	--print-right-rail: 0px;
 	--print-stage-shift: calc((var(--print-left-rail) - var(--print-right-rail)) / 2);
+}
+
+body.print-ready .pagedjs_pages,
+body.print-ready .pagedjs_page,
+body.print-ready .pagedjs_sheet,
+body.print-ready .pagedjs_pagebox,
+body.print-ready .pagedjs_area,
+body.print-ready .pagedjs_page_content {
+	--pagedjs-width: var(--print-page-width);
+	--pagedjs-height: var(--print-page-height);
+	--pagedjs-width-right: var(--print-page-width);
+	--pagedjs-height-right: var(--print-page-height);
+	--pagedjs-width-left: var(--print-page-width);
+	--pagedjs-height-left: var(--print-page-height);
+	--pagedjs-pagebox-width: var(--print-page-width);
+	--pagedjs-pagebox-height: var(--print-page-height);
+	--pagedjs-margin-top: var(--print-page-margin-top);
+	--pagedjs-margin-right: var(--print-page-margin-right);
+	--pagedjs-margin-bottom: var(--print-page-margin-bottom);
+	--pagedjs-margin-left: var(--print-page-margin-left);
 }
 body.print-ready p,
 body.print-ready li {
@@ -96,6 +124,67 @@ body.print-ready mark.highlight-yellow { color:#735400; font-weight:700; border-
 body.print-ready mark.highlight-teal { color:#1d6158; font-weight:700; border-color:rgba(29, 97, 88, 0.28); }
 body.print-ready mark.highlight-blue { color:#2f4f90; font-weight:700; border-color:rgba(47, 79, 144, 0.28); }
 body.print-ready mark.highlight-pink { color:#8a4564; font-weight:700; border-color:rgba(138, 69, 100, 0.28); }
+body.print-ready .callout {
+	display:flex;
+	align-items:flex-start;
+	gap:0.8rem;
+	margin:0.85rem 0 1.1rem;
+	padding:1rem;
+	border-radius:10px;
+}
+body.print-ready .callout > :first-child {
+	flex:0 0 auto;
+}
+body.print-ready .callout > :last-child {
+	flex:1 1 auto;
+	min-width:0;
+}
+body.print-ready .callout p:first-child,
+body.print-ready .callout ul:first-child,
+body.print-ready .callout ol:first-child {
+	margin-top:0;
+}
+body.print-ready .callout p:last-child,
+body.print-ready .callout ul:last-child,
+body.print-ready .callout ol:last-child {
+	margin-bottom:0;
+}
+body.print-ready .callout .print-callout-merge-head {
+	margin-top:0 !important;
+}
+body.print-ready .callout .print-callout-merge-tail {
+	margin-bottom:0 !important;
+}
+body.print-ready .block-color-default_background {
+	background:transparent;
+}
+body.print-ready .block-color-gray_background {
+	background:rgba(240, 239, 237, 1);
+}
+body.print-ready .block-color-brown_background {
+	background:rgba(245, 237, 233, 1);
+}
+body.print-ready .block-color-orange_background {
+	background:rgba(251, 235, 222, 1);
+}
+body.print-ready .block-color-yellow_background {
+	background:rgba(249, 243, 220, 1);
+}
+body.print-ready .block-color-teal_background {
+	background:rgba(232, 241, 236, 1);
+}
+body.print-ready .block-color-blue_background {
+	background:rgba(229, 242, 252, 1);
+}
+body.print-ready .block-color-purple_background {
+	background:rgba(243, 235, 249, 1);
+}
+body.print-ready .block-color-pink_background {
+	background:rgba(250, 233, 241, 1);
+}
+body.print-ready .block-color-red_background {
+	background:rgba(252, 233, 231, 1);
+}
 body.print-ready figcaption {
 	display:none;
 }
@@ -116,7 +205,7 @@ body.print-ready .print-appendix-summary {
 
 @media only print {
 	@page {
-		size: A4;
+		size: 210mm 297mm;
 		margin: 14mm 14mm 18mm;
 		@bottom-center {
 			content: counter(page);
@@ -127,35 +216,56 @@ body.print-ready .print-appendix-summary {
 		}
 	}
 	html, body { background:#fff; }
-	body { color:#222; font-size:10.4pt; line-height:1.62; white-space:normal; }
-	article.page { width:100%; }
-	header { margin-bottom:1rem; break-after: avoid-page; page-break-after: avoid; }
-	h1, h2, h3, summary, .print-details-summary { break-after: avoid-page; page-break-after: avoid; }
-	h3 { margin-top:1.35rem; }
-	p, li { orphans:3; widows:3; }
-	ul > li, ol > li, blockquote, .callout { break-inside: avoid-page; page-break-inside: avoid; }
-	li.print-breakable-item,
-	li.print-breakable-item > div,
-	li.print-breakable-item > p,
-	li.print-breakable-item > ul,
-	li.print-breakable-item > ol,
-	li.print-breakable-item ul > li,
-	li.print-breakable-item ol > li { break-inside: auto !important; page-break-inside: auto !important; }
-	hr { margin:0.9rem 0 1rem; break-after: avoid-page; page-break-after: avoid; }
-	figure, .image, img { break-inside: avoid-page; page-break-inside: avoid; }
-	img { max-height:78vh; object-fit:contain; }
+	body.print-ready:not([data-print-paged-output="true"]) { color:#222; font-size:10.4pt; line-height:1.62; white-space:normal; }
+	body.print-ready:not([data-print-paged-output="true"]) article.page { width:100%; }
+	body.print-ready:not([data-print-paged-output="true"]) header { margin-bottom:1rem; break-after: avoid-page; page-break-after: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) h1,
+	body.print-ready:not([data-print-paged-output="true"]) h2,
+	body.print-ready:not([data-print-paged-output="true"]) h3,
+	body.print-ready:not([data-print-paged-output="true"]) summary,
+	body.print-ready:not([data-print-paged-output="true"]) .print-details-summary { break-after: avoid-page; page-break-after: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) h3 { margin-top:1.35rem; }
+	body.print-ready:not([data-print-paged-output="true"]) p,
+	body.print-ready:not([data-print-paged-output="true"]) li { orphans:3; widows:3; }
+	body.print-ready:not([data-print-paged-output="true"]) ul > li,
+	body.print-ready:not([data-print-paged-output="true"]) ol > li,
+	body.print-ready:not([data-print-paged-output="true"]) blockquote,
+	body.print-ready:not([data-print-paged-output="true"]) .callout { break-inside: avoid-page; page-break-inside: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item > div,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item > p,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item > ul,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item > ol,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item ul > li,
+	body.print-ready:not([data-print-paged-output="true"]) li.print-breakable-item ol > li { break-inside: auto !important; page-break-inside: auto !important; }
+	body.print-ready:not([data-print-paged-output="true"]) hr { margin:0.9rem 0 1rem; break-after: avoid-page; page-break-after: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) figure,
+	body.print-ready:not([data-print-paged-output="true"]) .image,
+	body.print-ready:not([data-print-paged-output="true"]) img { break-inside: avoid-page; page-break-inside: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) img { max-height:78vh; object-fit:contain; }
 	body.print-ready figure.image img { max-height:none !important; }
-	figcaption { break-before: avoid-page; page-break-before: avoid; }
-table, .simple-table, .collection-content { width:100% !important; table-layout:fixed; break-inside:avoid-page; page-break-inside:avoid; font-size:0.82rem; }
-.print-table-block { display:block; width:100%; }
-.print-table-block > table, .print-table-block > .simple-table, .print-table-block > .collection-content { width:100% !important; }
-thead { display:table-header-group; }
-tbody { display:table-row-group; break-inside:auto; page-break-inside:auto; }
-tfoot { display:table-footer-group; }
-	tr, th, td { break-inside: avoid-page; page-break-inside: avoid; }
-	th, td, .simple-table th, .simple-table td { padding:0.35em 0.5em; vertical-align:top; }
-	details, .print-details-block { break-inside:auto; page-break-inside:auto; }
-	details > summary, .print-details-summary { margin-bottom:0.6rem; }
+	body.print-ready:not([data-print-paged-output="true"]) figcaption { break-before: avoid-page; page-break-before: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) table,
+	body.print-ready:not([data-print-paged-output="true"]) .simple-table,
+	body.print-ready:not([data-print-paged-output="true"]) .collection-content { width:100% !important; table-layout:fixed; break-inside:avoid-page; page-break-inside:avoid; font-size:0.82rem; }
+	body.print-ready:not([data-print-paged-output="true"]) .print-table-block { display:block; width:100%; }
+	body.print-ready:not([data-print-paged-output="true"]) .print-table-block > table,
+	body.print-ready:not([data-print-paged-output="true"]) .print-table-block > .simple-table,
+	body.print-ready:not([data-print-paged-output="true"]) .print-table-block > .collection-content { width:100% !important; }
+	body.print-ready:not([data-print-paged-output="true"]) thead { display:table-header-group; }
+	body.print-ready:not([data-print-paged-output="true"]) tbody { display:table-row-group; break-inside:auto; page-break-inside:auto; }
+	body.print-ready:not([data-print-paged-output="true"]) tfoot { display:table-footer-group; }
+	body.print-ready:not([data-print-paged-output="true"]) tr,
+	body.print-ready:not([data-print-paged-output="true"]) th,
+	body.print-ready:not([data-print-paged-output="true"]) td { break-inside: avoid-page; page-break-inside: avoid; }
+	body.print-ready:not([data-print-paged-output="true"]) th,
+	body.print-ready:not([data-print-paged-output="true"]) td,
+	body.print-ready:not([data-print-paged-output="true"]) .simple-table th,
+	body.print-ready:not([data-print-paged-output="true"]) .simple-table td { padding:0.35em 0.5em; vertical-align:top; }
+	body.print-ready:not([data-print-paged-output="true"]) details,
+	body.print-ready:not([data-print-paged-output="true"]) .print-details-block { break-inside:auto; page-break-inside:auto; }
+	body.print-ready:not([data-print-paged-output="true"]) details > summary,
+	body.print-ready:not([data-print-paged-output="true"]) .print-details-summary { margin-bottom:0.6rem; }
 }
 
 
@@ -167,7 +277,7 @@ body.print-ready p:empty {
 @media only screen {
 	body.print-ready {
 		margin: 0;
-		padding: 32px 0 88px;
+		padding: 16px 0 72px;
 		max-width: none;
 		min-height: 100vh;
 		background: var(--print-ui-canvas);
@@ -252,6 +362,100 @@ body.print-ready .page-title {
 	margin-bottom: 0.2em;
 }
 
+body.print-ready .print-merged-section-kicker {
+	display: block;
+	margin: 0 0 0.18rem;
+	padding: 0;
+	font-size: 0.72rem;
+	font-weight: 800;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: rgba(55, 53, 47, 0.56);
+}
+
+body.print-ready .print-merged-toc-block {
+	margin: 0 0 1.4rem;
+	padding: 0 0 1rem;
+	border-bottom: 1px solid rgba(55, 53, 47, 0.12);
+}
+
+body.print-ready .print-merged-section-title {
+	margin: 0 0 0.85rem;
+	font-size: 1.24rem;
+	line-height: 1.3;
+}
+
+body.print-ready .print-merged-toc-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+}
+
+body.print-ready .print-merged-toc-item {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: 0.7rem;
+	margin: 0;
+	padding: 0.18rem 0;
+	color: inherit;
+	border-bottom: 0;
+	cursor: pointer;
+}
+
+body.print-ready .print-merged-toc-item.is-level-1 {
+	font-weight: 700;
+}
+
+body.print-ready .print-merged-toc-item.is-level-2 {
+	padding-left: 0.9rem;
+}
+
+body.print-ready .print-merged-toc-item.is-level-3 {
+	padding-left: 1.8rem;
+	font-size: 0.96em;
+}
+
+body.print-ready .print-merged-toc-item.is-level-4 {
+	padding-left: 2.6rem;
+	font-size: 0.9em;
+}
+
+body.print-ready .print-merged-toc-label {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+body.print-ready .print-merged-toc-leader {
+	flex: 1 1 auto;
+	min-width: 1.25rem;
+	border-bottom: 1px dotted rgba(93, 103, 116, 0.42);
+	transform: translateY(-0.16rem);
+}
+
+body.print-ready .print-merged-toc-page {
+	flex: 0 0 auto;
+	min-width: 2.3rem;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	font-weight: 700;
+	color: inherit;
+}
+
+body.print-ready .print-merged-toc-item.is-unresolved .print-merged-toc-page {
+	opacity: 0.35;
+}
+
+body.print-ready .print-merged-document {
+	margin: 0;
+	break-before: page;
+	page-break-before: always;
+}
+
+body.print-ready .print-merged-document > header {
+	margin-bottom: 1rem;
+}
+
 body.print-ready h3 {
 	display:flex;
 	align-items:flex-end;
@@ -263,27 +467,24 @@ body.print-ready h3 {
 }
 
 body.print-ready h3::after {
-	content:"";
-	flex:1;
-	border-bottom:2px solid rgba(101, 81, 51, 0.16);
-	transform:translateY(-0.2rem);
+	content:none;
 }
 
 body.print-ready .print-section {
-	padding: 1.1rem 1.2rem 1.25rem;
-	border: 1px solid rgba(109, 93, 69, 0.14);
-	border-radius: 16px;
-	background:#fff;
+	padding: 0;
+	border: none;
+	border-radius: 0;
+	background: transparent;
 	box-shadow: none;
 	margin: 1.2rem 0 1.55rem;
 }
 
 body.print-ready figure.image {
 	margin: 0.95rem 0 1.2rem;
-	padding: 0.55rem;
-	border: 1px solid rgba(98, 84, 63, 0.12);
+	padding: 0;
+	border: none;
 	border-radius: 0;
-	background: #fff;
+	background: transparent;
 	display:flex;
 	flex-direction:column;
 	align-items:center;
@@ -299,10 +500,11 @@ body.print-ready figure.image img {
 	display:block;
 	margin:0 auto;
 	border-radius: 0;
-	box-shadow: 0 4px 18px rgba(28, 28, 28, 0.08);
+	border: none;
+	box-shadow: none;
 }
 
-body.print-ready figure.image.print-image-resized img {
+body.print-ready figure.image[data-print-image-scale] img {
 	width: calc(100% * var(--print-image-scale, 1)) !important;
 	max-width: calc(100% * var(--print-image-scale, 1)) !important;
 	height: auto !important;
@@ -329,6 +531,56 @@ body.print-ready table.simple-table tbody tr:nth-child(even) td {
 	background:#fff;
 }
 
+body.print-ready table.simple-table th.block-color-default_background,
+body.print-ready table.simple-table td.block-color-default_background {
+	background:transparent !important;
+}
+
+body.print-ready table.simple-table th.block-color-gray_background,
+body.print-ready table.simple-table td.block-color-gray_background {
+	background:rgba(240, 239, 237, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-brown_background,
+body.print-ready table.simple-table td.block-color-brown_background {
+	background:rgba(245, 237, 233, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-orange_background,
+body.print-ready table.simple-table td.block-color-orange_background {
+	background:rgba(251, 235, 222, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-yellow_background,
+body.print-ready table.simple-table td.block-color-yellow_background {
+	background:rgba(249, 243, 220, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-teal_background,
+body.print-ready table.simple-table td.block-color-teal_background {
+	background:rgba(232, 241, 236, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-blue_background,
+body.print-ready table.simple-table td.block-color-blue_background {
+	background:rgba(229, 242, 252, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-purple_background,
+body.print-ready table.simple-table td.block-color-purple_background {
+	background:rgba(243, 235, 249, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-pink_background,
+body.print-ready table.simple-table td.block-color-pink_background {
+	background:rgba(250, 233, 241, 1) !important;
+}
+
+body.print-ready table.simple-table th.block-color-red_background,
+body.print-ready table.simple-table td.block-color-red_background {
+	background:rgba(252, 233, 231, 1) !important;
+}
+
 body.print-ready table.simple-table tr,
 body.print-ready table.simple-table th,
 body.print-ready table.simple-table td {
@@ -336,26 +588,20 @@ body.print-ready table.simple-table td {
 	page-break-inside: avoid;
 }
 
-body.print-ready .block-color-yellow_background {
-	background:#fff !important;
-	font-weight:600;
-	border-left:3px solid rgba(115, 84, 0, 0.38);
-}
-
 body.print-ready details.print-appendix[open] > summary {
-	padding: 0.6rem 0.8rem;
-	border: 1px solid rgba(98, 84, 63, 0.14);
-	border-radius: 12px;
-	background: #fff;
+	padding: 0 0 0.25rem;
+	border: none;
+	border-radius: 0;
+	background: transparent;
 	box-shadow: none;
 }
 
 body.print-ready .print-shortcut-block {
 	margin: 0.85rem 0 1.1rem;
-	padding: 0.7rem 0.8rem 0.3rem;
-	border: 1px solid rgba(98, 84, 63, 0.12);
+	padding: 0;
+	border: none;
 	border-radius: 0;
-	background: #fff;
+	background: transparent;
 }
 
 body.print-ready .print-shortcut-block > ol {
@@ -595,16 +841,12 @@ body.print-ready .print-measure-root {
 
 body.print-ready .print-measure-root article.page {
 	max-width: none !important;
-	width: 688px !important;
+	width: var(--print-content-width) !important;
 	margin: 0 !important;
 	padding: 0 !important;
 	background: transparent !important;
 	box-shadow: none !important;
 	border-radius: 0 !important;
-}
-
-body.print-ready.print-compact .print-measure-root article.page {
-	width: 718px !important;
 }
 
 body.print-ready .print-measure-root .print-section {
@@ -628,13 +870,31 @@ body.print-ready .print-measure-root figure.image {
 	background: transparent !important;
 }
 
+body.print-ready[data-print-paged-output="true"] .pagedjs_page .pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content,
+body.print-ready[data-print-paged-output="true"] .pagedjs_page .pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content > div,
+body.print-ready[data-print-paged-output="true"] .pagedjs_page article.page,
+body.print-ready[data-print-paged-output="true"] .pagedjs_page .page-body {
+	width: 100% !important;
+	max-width: none !important;
+	box-sizing: border-box !important;
+}
+
+body.print-ready[data-print-paged-output="true"] .pagedjs_page article.page {
+	margin: 0 !important;
+	padding: 0 !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	border-radius: 0 !important;
+	transform: none !important;
+}
+
 @media only print {
-	body.print-ready {
+	body.print-ready:not([data-print-paged-output="true"]) {
 		margin: 0;
 		padding: 0;
 	}
 
-	body.print-ready article.page {
+	body.print-ready:not([data-print-paged-output="true"]) article.page {
 		max-width: none;
 		margin: 0;
 		padding: 0;
@@ -643,7 +903,7 @@ body.print-ready .print-measure-root figure.image {
 		border-radius: 0;
 	}
 
-	body.print-ready .print-section {
+	body.print-ready:not([data-print-paged-output="true"]) .print-section {
 		margin: 0 0 0.75rem;
 		padding: 0;
 		border: none;
@@ -652,24 +912,24 @@ body.print-ready .print-measure-root figure.image {
 		box-shadow: none;
 	}
 
-	body.print-ready h3 {
+	body.print-ready:not([data-print-paged-output="true"]) h3 {
 		margin-top: 0;
 		padding-top: 0;
 	}
 
-	body.print-ready .print-section.print-page-start {
+	body.print-ready:not([data-print-paged-output="true"]) .print-section.print-page-start {
 		break-before: page;
 		page-break-before: always;
 	}
 
-	body.print-ready figure.image {
+	body.print-ready:not([data-print-paged-output="true"]) figure.image {
 		padding: 0.15rem 0 0;
 		border: none;
 		border-radius: 0;
 		background: transparent;
 	}
 
-	body.print-ready .print-shortcut-block {
+	body.print-ready:not([data-print-paged-output="true"]) .print-shortcut-block {
 		break-before: auto;
 		page-break-before: auto;
 		break-inside: avoid-page;
@@ -681,17 +941,17 @@ body.print-ready .print-measure-root figure.image {
 		background: transparent;
 	}
 
-	body.print-ready .print-shortcut-block.print-shortcut-first {
+	body.print-ready:not([data-print-paged-output="true"]) .print-shortcut-block.print-shortcut-first {
 		break-before: auto;
 		page-break-before: auto;
 	}
 
-	body.print-ready details.print-appendix {
+	body.print-ready:not([data-print-paged-output="true"]) details.print-appendix {
 		break-before: page;
 		page-break-before: always;
 	}
 
-	body.print-ready details.print-appendix > summary {
+	body.print-ready:not([data-print-paged-output="true"]) details.print-appendix > summary {
 		padding: 0 0 0.25rem;
 		border: none;
 		border-radius: 0;
@@ -700,19 +960,23 @@ body.print-ready .print-measure-root figure.image {
 		font-size: 13pt;
 	}
 
-	body.print-ready table.simple-table {
+	body.print-ready:not([data-print-paged-output="true"]) table.simple-table {
 		font-size: 9pt;
 	}
 
-	body.print-ready figure.image img {
+	body.print-ready:not([data-print-paged-output="true"]) figure.image img {
 		box-shadow: none;
 		border-radius: 0;
-		border: 1px solid #d7d0c5;
+		border: none;
 	}
 }
 
 body.print-ready.print-compact {
 	font-size: 0.97em;
+	--print-page-margin-top: 10mm;
+	--print-page-margin-right: 10mm;
+	--print-page-margin-bottom: 14mm;
+	--print-page-margin-left: 10mm;
 	--print-indent-step: 1.1rem;
 	--print-nested-indent-step: 1.1rem;
 	--print-bullet-gutter: 0.82rem;
@@ -735,8 +999,8 @@ body.print-ready.print-compact li + li {
 
 body.print-ready.print-compact .print-section {
 	margin: 0.75rem 0 0.95rem;
-	padding: 0.75rem 0.85rem 0.9rem;
-	border-radius: 10px;
+	padding: 0;
+	border-radius: 0;
 }
 
 body.print-ready.print-compact h3 {
@@ -747,7 +1011,7 @@ body.print-ready.print-compact h3 {
 
 body.print-ready.print-compact figure.image {
 	margin: 0.5rem 0 0.7rem;
-	padding: 0.3rem;
+	padding: 0;
 	display:flex;
 	flex-direction:column;
 	align-items:center;
@@ -769,17 +1033,17 @@ body.print-ready.print-compact table.simple-table td {
 }
 
 body.print-ready.print-compact details.print-appendix[open] > summary {
-	padding: 0.42rem 0.58rem;
+	padding: 0 0 0.25rem;
 }
 
 body.print-ready.print-compact .print-shortcut-block {
 	margin: 0.45rem 0 0.6rem;
-	padding: 0.38rem 0.5rem 0.12rem;
-	border-radius: 10px;
+	padding: 0;
+	border-radius: 0;
 }
 
 @page {
-	size: A4;
+	size: 210mm 297mm;
 	margin: 10mm 10mm 14mm;
 	@bottom-center {
 		content: counter(page);
@@ -792,91 +1056,91 @@ body.print-ready.print-compact .print-shortcut-block {
 
 	@media only print {
 
-	body.print-ready.print-compact {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) {
 		font-size: 9.4pt;
 		line-height: 1.48;
 	}
 
-	body.print-ready.print-compact header {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) header {
 		margin-bottom: 0.55rem;
 	}
 
-	body.print-ready.print-compact .page-title {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .page-title {
 		font-size: 1.82rem;
 		margin-bottom: 0.08em;
 	}
 
-	body.print-ready.print-compact .page-header-icon {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .page-header-icon {
 		margin-bottom: 0.18rem;
 	}
 
-	body.print-ready.print-compact .print-section {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-section {
 		margin: 0 0 0.42rem;
 		padding: 0;
 	}
 
-	body.print-ready.print-compact h3 {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) h3 {
 		font-size: 11.5pt;
 		margin-bottom: 0.12rem;
 	}
 
-	body.print-ready.print-compact p,
-	body.print-ready.print-compact li {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) p,
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) li {
 		orphan: 2;
 		widows: 2;
 	}
 
-	body.print-ready.print-compact figure.image {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) figure.image {
 		margin: 0.28rem 0 0.45rem;
 		padding: 0;
 	}
 
-	body.print-ready.print-compact .print-figure-pair {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-figure-pair {
 		display: inline-block;
 		width: 100%;
 	}
 
-	body.print-ready.print-compact .print-numbered-step-pair {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-numbered-step-pair {
 		display: inline-block;
 		width: 100%;
 	}
 
-	body.print-ready.print-compact .print-major-page-start {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-major-page-start {
 		break-before: page;
 		page-break-before: always;
 	}
 
-	body.print-ready.print-compact .print-major-opening {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-major-opening {
 		display: inline-block;
 		width: 100%;
 	}
 
-body.print-ready.print-compact figure.image img {
-	max-height: none;
-}
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) figure.image img {
+		max-height: none;
+	}
 
-	body.print-ready.print-compact table.simple-table {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) table.simple-table {
 		font-size: 8.2pt;
 		margin: 0.2rem 0 0.45rem;
 	}
 
-	body.print-ready.print-compact table.simple-table th,
-	body.print-ready.print-compact table.simple-table td {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) table.simple-table th,
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) table.simple-table td {
 		padding: 0.18em 0.26em;
 	}
 
-	body.print-ready.print-compact .print-shortcut-block {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) .print-shortcut-block {
 		break-inside: auto;
 		page-break-inside: auto;
 		margin: 0.18rem 0 0.3rem;
 	}
 
-	body.print-ready.print-compact details.print-appendix {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) details.print-appendix {
 		break-before: auto;
 		page-break-before: auto;
 	}
 
-	body.print-ready.print-compact details.print-appendix > summary {
+	body.print-ready.print-compact:not([data-print-paged-output="true"]) details.print-appendix > summary {
 		font-size: 11.2pt;
 		padding: 0 0 0.12rem;
 		margin-bottom: 0.22rem;

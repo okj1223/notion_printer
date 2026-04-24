@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import hashlib
 import html as html_lib
 import json
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
@@ -139,6 +141,7 @@ VOID_TAGS = {
     "track",
     "wbr",
 }
+GENERATED_OUTPUT_DIR_PREFIXES = ("_notion_printer_", "_runs")
 
 
 @dataclass
@@ -508,6 +511,8 @@ def block_contract_for_node(node: HtmlNode, *, inside_table: bool) -> dict[str, 
         return {"block_type": "quote_block", "block_role": "quote", "atomic": True}
     if is_code_block_node(node) and not inside_table:
         return {"block_type": "code_block", "block_role": "code", "atomic": True}
+    if node.tag == "hr" and not inside_table:
+        return {"block_type": "divider", "block_role": "separator", "atomic": True}
     if node.tag == "p" and not inside_table:
         return {"block_type": "paragraph", "block_role": "text", "atomic": True}
     if has_class(node, "print-details-summary") and not inside_table:
@@ -544,6 +549,8 @@ def block_label_for_node(node: HtmlNode, block_type: str) -> str:
         return "인용 블록"
     if block_type == "code_block":
         return "코드 블록"
+    if block_type == "divider":
+        return "구분선"
     return block_type.replace("_", " ")
 
 
@@ -726,6 +733,18 @@ class Variant:
     fast: bool
 
 
+@dataclass(frozen=True)
+class PrinterPageProfile:
+    printer_name: str
+    page_width_mm: float
+    page_height_mm: float
+    margin_top_mm: float
+    margin_right_mm: float
+    margin_bottom_mm: float
+    margin_left_mm: float
+    driver_print_scaling: str | None = None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -806,6 +825,106 @@ def load_templates() -> tuple[str, str, str, str, str]:
         RUNTIME_PATH.read_text(encoding="utf-8").strip() + "\n",
         PAGED_POLYFILL_PATH.read_text(encoding="utf-8").strip() + "\n",
     )
+
+
+def run_command_text(command: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return ""
+    return (completed.stdout or "").strip()
+
+
+def preferred_printer_name() -> str | None:
+    for key in ("LPDEST", "PRINTER"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+
+    default_output = run_command_text(["lpstat", "-d"])
+    match = re.search(r"system default destination:\s*(\S+)", default_output)
+    if match:
+        return match.group(1)
+
+    printers_output = run_command_text(["lpstat", "-p"])
+    printers = re.findall(r"^printer\s+(\S+)\s+", printers_output, flags=re.MULTILINE)
+    unique_printers = sorted(set(printers))
+    if len(unique_printers) == 1:
+        return unique_printers[0]
+    return None
+
+
+def preferred_printer_scaling_mode(printer_name: str) -> str | None:
+    current_options = run_command_text(["lpoptions", "-p", printer_name])
+    match = re.search(r"(?:^|\s)print-scaling=(\S+)", current_options)
+    if match:
+        return match.group(1).strip()
+
+    options_output = run_command_text(["lpoptions", "-p", printer_name, "-l"])
+    match = re.search(r"^print-scaling/[^:]*:\s*(.+)$", options_output, flags=re.MULTILINE)
+    if not match:
+        return None
+
+    for token in match.group(1).split():
+        if token.startswith("*"):
+            return token[1:].strip()
+    return None
+
+
+def detect_printer_page_profile() -> PrinterPageProfile | None:
+    printer_name = preferred_printer_name()
+    if not printer_name:
+        return None
+
+    query = run_command_text(
+        [
+            "ipptool",
+            "-tv",
+            f"ipp://localhost/printers/{printer_name}",
+            "/usr/share/cups/ipptool/get-printer-attributes.test",
+        ]
+    )
+    if not query:
+        return None
+
+    match = re.search(
+        r"\{media-size=\{x-dimension=(?P<width>21000)\s+y-dimension=(?P<height>29700)\}\s+"
+        r"media-bottom-margin=(?P<bottom>\d+)\s+media-left-margin=(?P<left>\d+)\s+"
+        r"media-right-margin=(?P<right>\d+)\s+media-top-margin=(?P<top>\d+)",
+        query,
+    )
+    if not match:
+        return None
+
+    page_width_mm = int(match.group("width")) / 100.0
+    page_height_mm = int(match.group("height")) / 100.0
+    margin_bottom_mm = int(match.group("bottom")) / 100.0
+    margin_left_mm = int(match.group("left")) / 100.0
+    margin_right_mm = int(match.group("right")) / 100.0
+    margin_top_mm = int(match.group("top")) / 100.0
+
+    profile = PrinterPageProfile(
+        printer_name=printer_name,
+        page_width_mm=page_width_mm,
+        page_height_mm=page_height_mm,
+        margin_top_mm=margin_top_mm,
+        margin_right_mm=margin_right_mm,
+        margin_bottom_mm=margin_bottom_mm,
+        margin_left_mm=margin_left_mm,
+        driver_print_scaling=preferred_printer_scaling_mode(printer_name),
+    )
+    return profile
+
+
+def format_mm(value: float) -> str:
+    return f"{value:.2f}mm"
 
 
 def normalize_title(title: str) -> str:
@@ -1039,7 +1158,7 @@ def build_paged_config_js() -> str:
   var existingBefore = typeof existing.before === 'function' ? existing.before : null;
   var existingAfter = typeof existing.after === 'function' ? existing.after : null;
 
-  window.PagedConfig = Object.assign({}, existing, {
+    window.PagedConfig = Object.assign({}, existing, {
     auto: existing.auto !== false,
     before: async function () {
       await waitForWindowLoad(15000);
@@ -1051,6 +1170,9 @@ def build_paged_config_js() -> str:
     },
     after: async function (flow) {
       document.documentElement.setAttribute('data-notion-printer-paged-ready', 'true');
+      if (document.body) {
+        document.body.setAttribute('data-print-paged-output', 'true');
+      }
       try {
         document.dispatchEvent(new CustomEvent('notion-printer-paged-ready', {
           detail: {
@@ -1087,7 +1209,12 @@ def inject_paged_polyfill(html: str, paged_js: str) -> str:
     return html + block
 
 
-def build_theme_css(theme_css: str, page_numbers: str, font_size: str) -> str:
+def build_theme_css(
+    theme_css: str,
+    page_numbers: str,
+    font_size: str,
+    printer_profile: PrinterPageProfile | None = None,
+) -> str:
     overrides: list[str] = []
     font_size_presets = {
         "xsmall": {
@@ -1116,7 +1243,45 @@ def build_theme_css(theme_css: str, page_numbers: str, font_size: str) -> str:
         },
     }
 
-    if page_numbers == "off":
+    if printer_profile:
+        bottom_center_rule = "content: none !important;"
+        if page_numbers != "off":
+            bottom_center_rule = """
+content: counter(page);
+font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+font-size: 8pt;
+font-weight: 600;
+color: #6c6256;
+""".strip()
+        overrides.append(
+            f"""
+body.print-ready,
+body.print-ready.print-compact {{
+  --print-page-width: {format_mm(printer_profile.page_width_mm)};
+  --print-page-height: {format_mm(printer_profile.page_height_mm)};
+  --print-page-margin-top: {format_mm(printer_profile.margin_top_mm)};
+  --print-page-margin-right: {format_mm(printer_profile.margin_right_mm)};
+  --print-page-margin-bottom: {format_mm(printer_profile.margin_bottom_mm)};
+  --print-page-margin-left: {format_mm(printer_profile.margin_left_mm)};
+}}
+
+body.print-ready .print-measure-root article.page,
+body.print-ready.print-compact .print-measure-root article.page {{
+  width: var(--print-content-width) !important;
+}}
+
+@media only print {{
+  @page {{
+    size: {format_mm(printer_profile.page_width_mm)} {format_mm(printer_profile.page_height_mm)};
+    margin: {format_mm(printer_profile.margin_top_mm)} {format_mm(printer_profile.margin_right_mm)} {format_mm(printer_profile.margin_bottom_mm)} {format_mm(printer_profile.margin_left_mm)};
+    @bottom-center {{
+      {bottom_center_rule}
+    }}
+  }}
+}}
+""".strip()
+        )
+    elif page_numbers == "off":
         overrides.append(
             """
 @media only print {
@@ -1169,6 +1334,142 @@ def relative_url(target: Path, output_dir: Path) -> str:
     return rel if rel.startswith((".", "..")) else f"./{rel}"
 
 
+def normalize_asset_lookup_key(value: str) -> str:
+    return re.sub(r"[\W_]+", "", value or "", flags=re.UNICODE).casefold()
+
+
+def is_generated_output_path(path: Path, base_dir: Path) -> bool:
+    try:
+        relative = path.relative_to(base_dir)
+    except ValueError:
+        return False
+    return any(
+        part.startswith("_notion_printer_") or part.startswith("_runs") or part.endswith("_preview_assets")
+        for part in relative.parts
+    )
+
+
+@lru_cache(maxsize=24)
+def build_local_asset_index(base_dir_str: str) -> tuple[dict[str, tuple[Path, ...]], dict[tuple[str, str], tuple[Path, ...]]]:
+    base_dir = Path(base_dir_str)
+    by_lower_name: dict[str, list[Path]] = defaultdict(list)
+    by_normalized_stem: dict[tuple[str, str], list[Path]] = defaultdict(list)
+    if not base_dir.exists():
+        return {}, {}
+
+    for path in base_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if is_generated_output_path(path, base_dir):
+            continue
+        resolved = path.resolve()
+        by_lower_name[path.name.casefold()].append(resolved)
+        normalized_stem = normalize_asset_lookup_key(path.stem)
+        if normalized_stem and path.suffix:
+            by_normalized_stem[(normalized_stem, path.suffix.casefold())].append(resolved)
+
+    lower_name_index = {
+        key: tuple(sorted(values, key=lambda item: str(item)))
+        for key, values in by_lower_name.items()
+    }
+    normalized_stem_index = {
+        key: tuple(sorted(values, key=lambda item: str(item)))
+        for key, values in by_normalized_stem.items()
+    }
+    return lower_name_index, normalized_stem_index
+
+
+def count_matching_suffix_tokens(candidate_tokens: list[str], hint_tokens: list[str]) -> int:
+    score = 0
+    for candidate_token, hint_token in zip(reversed(candidate_tokens), reversed(hint_tokens)):
+        if candidate_token != hint_token:
+            break
+        score += 1
+    return score
+
+
+def choose_best_asset_candidate(candidates: tuple[Path, ...], raw_url: str, base_dir: Path) -> Path | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    parsed = urlparse(raw_url)
+    hint_path = Path(unquote(parsed.path))
+    hint_tokens = [
+        normalized
+        for part in hint_path.parts[:-1]
+        if part not in {"", ".", ".."}
+        for normalized in [normalize_asset_lookup_key(part)]
+        if normalized
+    ]
+    base_dir = base_dir.resolve()
+
+    scored: list[tuple[int, int, str, Path]] = []
+    for candidate in candidates:
+        try:
+            relative_candidate = candidate.relative_to(base_dir)
+        except ValueError:
+            relative_candidate = candidate
+        candidate_tokens = [
+            normalized
+            for part in relative_candidate.parts[:-1]
+            for normalized in [normalize_asset_lookup_key(part)]
+            if normalized
+        ]
+        suffix_score = count_matching_suffix_tokens(candidate_tokens, hint_tokens)
+        total_score = suffix_score * 4
+        if hint_tokens and candidate_tokens and candidate_tokens[-1] == hint_tokens[-1]:
+            total_score += 3
+        if hint_tokens:
+            total_score += len(set(candidate_tokens) & set(hint_tokens))
+        scored.append((total_score, -len(candidate_tokens), str(candidate), candidate))
+
+    scored.sort(reverse=True)
+    best = scored[0]
+    if best[0] <= 0:
+        return None
+    if len(scored) > 1 and best[:2] == scored[1][:2]:
+        return None
+    return best[3]
+
+
+def resolve_existing_local_path(raw_url: str, base_dir: Path) -> Path:
+    direct_path = resolve_local_path(raw_url, base_dir)
+    if direct_path.exists():
+        return direct_path
+
+    parsed = urlparse(raw_url)
+    literal_candidate = (base_dir / parsed.path.lstrip("./")).resolve()
+    if literal_candidate.exists():
+        return literal_candidate
+
+    lower_name_index, normalized_stem_index = build_local_asset_index(str(base_dir.resolve()))
+    decoded_name = Path(unquote(parsed.path)).name
+    raw_name = Path(parsed.path).name
+
+    for name in (decoded_name, raw_name):
+        if not name:
+            continue
+        candidate = choose_best_asset_candidate(lower_name_index.get(name.casefold(), ()), raw_url, base_dir)
+        if candidate is not None:
+            return candidate
+
+    decoded_path = Path(decoded_name or raw_name)
+    normalized_stem = normalize_asset_lookup_key(decoded_path.stem)
+    suffix = decoded_path.suffix.casefold()
+    if normalized_stem and suffix:
+        candidate = choose_best_asset_candidate(
+            normalized_stem_index.get((normalized_stem, suffix), ()),
+            raw_url,
+            base_dir,
+        )
+        if candidate is not None:
+            return candidate
+
+    return direct_path
+
+
 def rewrite_local_urls(html: str, input_dir: Path, output_dir: Path) -> str:
     def repl(match: re.Match[str]) -> str:
         prefix = match.group("prefix")
@@ -1176,7 +1477,7 @@ def rewrite_local_urls(html: str, input_dir: Path, output_dir: Path) -> str:
         if not is_local_url(raw_url):
             return match.group(0)
 
-        source_path = resolve_local_path(raw_url, input_dir)
+        source_path = resolve_existing_local_path(raw_url, input_dir)
         if not source_path.exists():
             return match.group(0)
 
@@ -1247,7 +1548,7 @@ def collect_fast_rewrites(
         if raw_src in seen or not is_local_url(raw_src):
             continue
         seen.add(raw_src)
-        source_path = resolve_local_path(raw_src, input_dir)
+        source_path = resolve_existing_local_path(raw_src, input_dir)
         if not source_path.exists():
             continue
         preview_path = build_preview_asset(source_path, preview_dir, max_edge=max_edge, quality=quality)
@@ -1376,7 +1677,7 @@ def generate_variant(
     if raw_rewrites:
         effective_rewrites = {}
         for raw_src, preview_url in raw_rewrites.items():
-            source_path = resolve_local_path(raw_src, input_path.parent)
+            source_path = resolve_existing_local_path(raw_src, input_path.parent)
             current_url = relative_url(source_path, output_dir)
             effective_rewrites[current_url] = preview_url
         html = rewrite_img_sources(html, effective_rewrites)
@@ -1436,7 +1737,13 @@ def main() -> int:
     preview_dir = output_dir / preview_dir_name
 
     theme_css, learning_js, recommendation_js, runtime_js, paged_js = load_templates()
-    theme_css = build_theme_css(theme_css, page_numbers=args.page_numbers, font_size=args.font_size)
+    printer_profile = detect_printer_page_profile()
+    theme_css = build_theme_css(
+        theme_css,
+        page_numbers=args.page_numbers,
+        font_size=args.font_size,
+        printer_profile=printer_profile,
+    )
     source_html = input_path.read_text(encoding="utf-8")
     variants = build_variants(args.variants, include_fast=not args.no_fast)
 

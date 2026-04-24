@@ -6,5 +6,5 @@ Comment=Open the fixed Notion Printer debug preview URL
 Exec=sh -c 'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; "$SCRIPT_DIR/open_debug_preview.sh"'
 Terminal=false
 Categories=Utility;
-Icon=printer
+Icon=notion-printer
 StartupNotify=true

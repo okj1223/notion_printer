@@ -150,6 +150,12 @@ def parse_args() -> argparse.Namespace:
 
     serve = subparsers.add_parser("serve", help="Serve an HTML file over localhost and optionally open it.")
     serve.add_argument("html_file", type=Path, help="Generated print HTML file to preview.")
+    serve.add_argument(
+        "--serve-dir",
+        type=Path,
+        default=None,
+        help="Optional directory to use as the static-file root. Defaults to the HTML file directory.",
+    )
     serve.add_argument("--port", type=int, default=18789, help="Preferred port. Default: 18789.")
     serve.add_argument("--no-open", action="store_true", help="Do not open a browser automatically.")
 
@@ -208,7 +214,7 @@ def open_browser(url: str) -> None:
         pass
 
 
-def serve_html(html_file: Path, preferred_port: int, no_open: bool) -> int:
+def serve_html(html_file: Path, preferred_port: int, no_open: bool, serve_dir: Path | None = None) -> int:
     html_file = html_file.resolve()
     if not html_file.exists():
         print(f"HTML file not found: {html_file}", file=sys.stderr)
@@ -216,15 +222,19 @@ def serve_html(html_file: Path, preferred_port: int, no_open: bool) -> int:
 
     stop_previous_server()
 
-    serve_dir = html_file.parent
+    static_root = serve_dir.expanduser().resolve() if serve_dir else html_file.parent
     port = pick_port(preferred_port)
-    handler = partial(NotionPrinterPreviewHandler, directory=str(serve_dir), html_file=str(html_file))
+    handler = partial(NotionPrinterPreviewHandler, directory=str(static_root), html_file=str(html_file))
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     save_state(os.getpid(), port, html_file)
 
     version_token = str(html_file.stat().st_mtime_ns)
     url = f"http://127.0.0.1:{port}{DEBUG_ALIAS_PATH}?np_open={version_token}"
-    source_url = f"http://127.0.0.1:{port}/{quote(html_file.name)}?np_open={version_token}"
+    try:
+        source_rel = html_file.relative_to(static_root).as_posix()
+    except ValueError:
+        source_rel = html_file.name
+    source_url = f"http://127.0.0.1:{port}/{quote(source_rel)}?np_open={version_token}"
     print(f"Notion Printer preview: {url}")
     print(f"Notion Printer source: {source_url}")
     if not no_open:
@@ -252,7 +262,7 @@ def stop_server() -> int:
 def main() -> int:
     args = parse_args()
     if args.command == "serve":
-        return serve_html(args.html_file, args.port, args.no_open)
+        return serve_html(args.html_file, args.port, args.no_open, args.serve_dir)
     if args.command == "stop":
         return stop_server()
     return 1

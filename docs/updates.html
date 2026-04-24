@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notion Printer 업데이트 노트</title>
+  <style>
+    :root {
+      --ink: #17202f;
+      --muted: #596678;
+      --paper: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9e0e8;
+      --blue: #2463eb;
+      --blue-soft: #eaf1ff;
+      --green: #0f8b5f;
+      --green-soft: #e8f7ef;
+      --shadow: 0 10px 30px rgba(23, 32, 47, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Pretendard", sans-serif;
+      line-height: 1.65;
+    }
+
+    .site-header {
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .nav,
+    .wrap {
+      max-width: 1020px;
+      margin: 0 auto;
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+
+    .nav {
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: inherit;
+      text-decoration: none;
+      font-weight: 900;
+    }
+
+    .brand img {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .nav-links a {
+      color: inherit;
+      text-decoration: none;
+      padding: 6px 8px;
+      border-radius: 8px;
+    }
+
+    .nav-links a:hover { background: #eef2f7; color: var(--ink); }
+
+    .wrap { padding-top: 34px; padding-bottom: 72px; }
+
+    .hero,
+    .release {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .hero { padding: 30px; }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 42px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 8px 0; }
+
+    .lead { color: var(--muted); font-size: 18px; max-width: 740px; }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .release {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .date {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .badge {
+      display: inline-flex;
+      width: fit-content;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    ul { margin: 12px 0 0; padding-left: 20px; }
+    li + li { margin-top: 6px; }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .button {
+      display: inline-flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: center;
+      padding: 9px 13px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 900;
+    }
+
+    .button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #ffffff;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: #eef2f7;
+      color: #1e293b;
+      font-family: "JetBrains Mono", "D2Coding", monospace;
+      font-size: 0.94em;
+    }
+
+    @media (max-width: 760px) {
+      .nav, .wrap { padding-left: 14px; padding-right: 14px; }
+      .nav { align-items: flex-start; flex-direction: column; padding-top: 12px; padding-bottom: 12px; }
+      .hero, .release { padding: 18px; }
+      .release { grid-template-columns: 1fr; }
+      h1 { font-size: 34px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav" aria-label="주요 링크">
+      <a class="brand" href="./index.html">
+        <img src="./assets/notion-printer-512.png" alt="">
+        <span>Notion Printer</span>
+      </a>
+      <div class="nav-links">
+        <a href="./index.html">메인</a>
+        <a href="./team-user-guide.html">사용 가이드</a>
+        <a href="./downloads/notion-printer_1.0.1_all.deb">다운로드</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>업데이트 노트</h1>
+      <p class="lead">
+        팀에 공유한 Notion Printer 릴리즈 기록입니다. 새 버전이 나오면 최신 항목을 위에 추가하고,
+        설치 파일과 상세 리포트 링크를 함께 보관합니다.
+      </p>
+    </section>
+
+    <section class="timeline" aria-label="릴리즈 목록">
+      <article class="release">
+        <div>
+          <h2>v1.0.1</h2>
+          <p class="date">2026-04-24</p>
+          <span class="badge">Latest</span>
+        </div>
+        <div>
+          <h3>ZIP 입력과 통합 프린터 기본 흐름 정리</h3>
+          <p>HTML/ZIP 1개 또는 여러 개를 선택해 통합 출력본을 만들 수 있도록 팀 배포 흐름을 정리한 버전입니다.</p>
+          <ul>
+            <li>ZIP 단일/다중 선택과 자동 압축 해제 지원</li>
+            <li>HTML+ZIP 혼합 선택 후 통합 출력 지원</li>
+            <li>생성된 <code>*_print*.html</code> 재입력 방지</li>
+            <li>팀원용 사용 가이드와 다운로드 페이지 정리</li>
+            <li>기본 권장값: Compact Print + Fast Preview, 목차 끄기, 쪽번호 켜기</li>
+          </ul>
+          <div class="actions">
+            <a class="button primary" href="./downloads/notion-printer_1.0.1_all.deb" download>설치 파일 받기</a>
+            <a class="button" href="./update-report-v1-0-1.html">상세 리포트</a>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
