@@ -13,8 +13,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from notion_printer_learning import append_events_payload, write_document_manifest, write_session_payload
-
 
 STATE_FILE = Path("/tmp/notion_printer_preview_server.json")
 DEBUG_ALIAS_PATH = "/_notion_printer_debug.html"
@@ -57,76 +55,7 @@ class NotionPrinterPreviewHandler(SimpleHTTPRequestHandler):
         self.send_header("Expires", "0")
         super().end_headers()
 
-    def read_json_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length)
-        if not raw:
-            return {}
-        return json.loads(raw.decode("utf-8"))
-
-    def enrich_payload(self, payload: dict) -> dict:
-        enriched = dict(payload)
-        session = enriched.get("session")
-        if isinstance(session, dict) and self.preview_html_file is not None:
-            merged_session = dict(session)
-            merged_session.setdefault("served_html_file", str(self.preview_html_file))
-            enriched["session"] = merged_session
-        manifest = enriched.get("manifest")
-        if isinstance(manifest, dict) and self.preview_html_file is not None:
-            merged_manifest = dict(manifest)
-            merged_manifest.setdefault("served_html_file", str(self.preview_html_file))
-            enriched["manifest"] = merged_manifest
-        return enriched
-
-    def handle_session_post(self) -> None:
-        try:
-            payload = self.enrich_payload(self.read_json_body())
-        except json.JSONDecodeError:
-            self.json_response(400, {"ok": False, "error": "invalid_json"})
-            return
-
-        manifest_path = None
-        if isinstance(payload.get("manifest"), dict):
-            manifest_path = write_document_manifest(payload["manifest"])
-        session_path = write_session_payload(payload)
-        self.json_response(
-            200,
-            {
-                "ok": True,
-                "session_path": str(session_path),
-                "manifest_path": str(manifest_path) if manifest_path else None,
-            },
-        )
-
-    def handle_events_post(self) -> None:
-        try:
-            payload = self.enrich_payload(self.read_json_body())
-        except json.JSONDecodeError:
-            self.json_response(400, {"ok": False, "error": "invalid_json"})
-            return
-
-        if isinstance(payload.get("session"), dict):
-            write_session_payload(payload)
-        written_paths = append_events_payload(payload)
-        self.json_response(
-            200,
-            {
-                "ok": True,
-                "written_paths": [str(path) for path in written_paths],
-                "event_count": len(payload.get("events", [])) if isinstance(payload.get("events"), list) else 0,
-            },
-        )
-
     def do_POST(self) -> None:
-        route = urlparse(self.path).path
-        if route == "/__notion_printer/session":
-            self.handle_session_post()
-            return
-        if route == "/__notion_printer/events":
-            self.handle_events_post()
-            return
         self.json_response(404, {"ok": False, "error": "not_found"})
 
     def do_HEAD(self) -> None:

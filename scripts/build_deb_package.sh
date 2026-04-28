@@ -43,12 +43,11 @@ OUTPUT_DEB="$DIST_DIR/${PACKAGE_NAME}_${PACKAGE_VERSION}_${DEB_ARCH}.deb"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$APP_ROOT" "$DEBIAN_DIR" "$BIN_DIR" "$APPLICATIONS_DIR" "$ICON_256_DIR" "$ICON_512_DIR" "$DOC_DIR"
-mkdir -p "$APP_ROOT/scripts" "$APP_ROOT/learning_data" "$APP_ROOT/notion_print_export" "$APP_ROOT/assets/icons"
+mkdir -p "$APP_ROOT/scripts" "$APP_ROOT/notion_print_export" "$APP_ROOT/assets/icons"
 
 install -m 755 "$REPO_ROOT/notion_print_export_launcher.sh" "$APP_ROOT/notion_print_export_launcher.sh"
 install -m 644 "$REPO_ROOT/notion_print_export.py" "$APP_ROOT/notion_print_export.py"
 install -m 644 "$REPO_ROOT/notion_print_preview.py" "$APP_ROOT/notion_print_preview.py"
-install -m 644 "$REPO_ROOT/notion_printer_learning.py" "$APP_ROOT/notion_printer_learning.py"
 install -m 644 "$REPO_ROOT/README.md" "$DOC_DIR/README.md"
 install -m 644 "$REPO_ROOT/RELEASE_GUIDE_KO.md" "$DOC_DIR/RELEASE_GUIDE_KO.md"
 install -m 644 "$REPO_ROOT/TEAM_USER_GUIDE.html" "$DOC_DIR/TEAM_USER_GUIDE.html"
@@ -61,8 +60,6 @@ install -m 644 "$REPO_ROOT/assets/icons/notion-printer-256.png" "$ICON_256_DIR/n
 install -m 644 "$REPO_ROOT/assets/icons/notion-printer-512.png" "$ICON_512_DIR/notion-printer.png"
 
 cp -a "$REPO_ROOT/notion_print_export/." "$APP_ROOT/notion_print_export/"
-mkdir -p "$APP_ROOT/learning_data/models"
-cp -a "$REPO_ROOT/learning_data/models/." "$APP_ROOT/learning_data/models/"
 
 find "$APP_ROOT" -type d -exec chmod 755 {} +
 find "$APP_ROOT" -type f -exec chmod 644 {} +

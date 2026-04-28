@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from datetime import datetime, timezone
 import hashlib
 import html as html_lib
 import json
@@ -20,13 +21,6 @@ from urllib.parse import unquote, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from notion_printer_learning import (
-    build_blocks_payload,
-    build_document_manifest,
-    write_blocks_payload,
-    write_document_manifest,
-)
-
 Image.MAX_IMAGE_PIXELS = None
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
@@ -37,12 +31,8 @@ except AttributeError:
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = SCRIPT_DIR / "notion_print_export"
 THEME_PATH = TEMPLATE_DIR / "theme.css"
-LEARNING_PATH = TEMPLATE_DIR / "learning.js"
-RECOMMENDATION_PATH = TEMPLATE_DIR / "recommendation.js"
 RUNTIME_PATH = TEMPLATE_DIR / "runtime.js"
 PAGED_POLYFILL_PATH = TEMPLATE_DIR / "paged.polyfill.js"
-RULES_MODEL_PATH = SCRIPT_DIR / "learning_data" / "models" / "rules_v1.json"
-LAYOUT_MODEL_PATH = SCRIPT_DIR / "learning_data" / "models" / "layout_recommender_v1.json"
 
 THEME_MARKER_START = "<!-- notion-print-export:theme -->"
 THEME_MARKER_END = "<!-- /notion-print-export:theme -->"
@@ -68,6 +58,8 @@ BODY_RE = re.compile(r"<body(?P<attrs>[^>]*)>", re.IGNORECASE)
 TITLE_RE = re.compile(r"(<title>)(.*?)(</title>)", re.IGNORECASE | re.DOTALL)
 IMG_SRC_RE = re.compile(r'(<img\b[^>]*?\bsrc=")([^"]+)(")', re.IGNORECASE)
 ATTR_RE = re.compile(r'(?P<prefix>\b(?:src|href)=")(?P<url>[^"]+)(")', re.IGNORECASE)
+TAG_RE = re.compile(r"<[^>]+>")
+NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
 PAGE_HEADER_ICON_RE = re.compile(
     r'<div class="page-header-icon[^"]*">.*?</div>',
     re.IGNORECASE | re.DOTALL,
@@ -81,6 +73,8 @@ EMPTY_CODE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 CONTRACT_WHITESPACE_RE = re.compile(r"\s+")
+SCHEMA_VERSION = 1
+GENERATOR_VERSION = "notion-printer"
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 MAJOR_HEADING_TAGS = {"h1", "h2", "h3"}
 LIST_LEADING_INLINE_TAGS = {"mark", "code", "strong", "em", "span", "a", "b", "i", "u", "s", "small", "sup", "sub"}
@@ -813,15 +807,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_templates() -> tuple[str, str, str, str, str]:
-    missing = [path for path in (THEME_PATH, LEARNING_PATH, RECOMMENDATION_PATH, RUNTIME_PATH, PAGED_POLYFILL_PATH) if not path.exists()]
+def load_templates() -> tuple[str, str, str]:
+    missing = [path for path in (THEME_PATH, RUNTIME_PATH, PAGED_POLYFILL_PATH) if not path.exists()]
     if missing:
         missing_list = ", ".join(str(path) for path in missing)
         raise FileNotFoundError(f"Missing print export template files: {missing_list}")
     return (
         THEME_PATH.read_text(encoding="utf-8").strip() + "\n",
-        LEARNING_PATH.read_text(encoding="utf-8").strip() + "\n",
-        RECOMMENDATION_PATH.read_text(encoding="utf-8").strip() + "\n",
         RUNTIME_PATH.read_text(encoding="utf-8").strip() + "\n",
         PAGED_POLYFILL_PATH.read_text(encoding="utf-8").strip() + "\n",
     )
@@ -931,6 +923,75 @@ def normalize_title(title: str) -> str:
     return TITLE_SUFFIX_RE.sub("", title.strip())
 
 
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def sha1_text(value: str) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()
+
+
+def safe_slug(value: str, fallback: str = "document") -> str:
+    lowered = value.strip().lower()
+    lowered = NON_SLUG_RE.sub("-", lowered)
+    lowered = lowered.strip("-")
+    return lowered or fallback
+
+
+def strip_html_tags(html: str) -> str:
+    unescaped = html_lib.unescape(TAG_RE.sub(" ", html))
+    return CONTRACT_WHITESPACE_RE.sub(" ", unescaped).strip()
+
+
+def extract_document_features(html: str) -> dict[str, int]:
+    plain_text = strip_html_tags(html)
+    return {
+        "section_count": len(re.findall(r"<h3\b", html, flags=re.IGNORECASE)),
+        "paragraph_count": len(re.findall(r"<p\b", html, flags=re.IGNORECASE)),
+        "image_count": len(re.findall(r"<img\b", html, flags=re.IGNORECASE)),
+        "table_count": len(re.findall(r"<table\b", html, flags=re.IGNORECASE)),
+        "bulleted_list_count": len(re.findall(r"<ul\b", html, flags=re.IGNORECASE)),
+        "numbered_list_count": len(re.findall(r"<ol\b", html, flags=re.IGNORECASE)),
+        "list_item_count": len(re.findall(r"<li\b", html, flags=re.IGNORECASE)),
+        "details_count": len(re.findall(r"<details\b", html, flags=re.IGNORECASE)),
+        "text_char_count": len(plain_text),
+    }
+
+
+def build_document_id(input_path: Path, source_html: str) -> str:
+    source_hash = sha1_text(source_html)[:12]
+    stem = safe_slug(input_path.stem)[:48]
+    return f"doc_{stem}_{source_hash}"
+
+
+def build_document_manifest(
+    *,
+    input_path: Path,
+    output_path: Path,
+    variant_name: str,
+    body_classes: Iterable[str],
+    source_html: str,
+) -> dict[str, object]:
+    body_class_list = [cls for cls in body_classes if cls]
+    source_hash = sha1_text(source_html)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generator_version": GENERATOR_VERSION,
+        "generated_at": utc_now_iso(),
+        "document_id": build_document_id(input_path, source_html),
+        "source_hash": source_hash,
+        "input_file": str(input_path),
+        "input_name": input_path.name,
+        "output_file": str(output_path),
+        "output_name": output_path.name,
+        "variant": variant_name,
+        "body_classes": body_class_list,
+        "is_fast_variant": variant_name.endswith("fast"),
+        "is_compact_variant": "print-compact" in body_class_list,
+        "features": extract_document_features(source_html),
+    }
+
+
 def strip_injected_blocks(html: str) -> str:
     blocks = (
         (THEME_MARKER_START, THEME_MARKER_END),
@@ -1016,64 +1077,6 @@ def inject_manifest(html: str, manifest: dict[str, object]) -> str:
         f'<script id="notion-printer-manifest" type="application/json">{manifest_json}</script>\n'
         f"{MANIFEST_MARKER_END}\n"
     )
-    if "</body>" in html:
-        return html.replace("</body>", block + "</body>", 1)
-    return html + block
-
-
-def inject_blocks_manifest(html: str, blocks_payload: dict[str, object]) -> str:
-    block_json = json.dumps(blocks_payload, ensure_ascii=False)
-    block = (
-        f"{BLOCKS_MARKER_START}\n"
-        f'<script id="notion-printer-blocks-manifest" type="application/json">{block_json}</script>\n'
-        f"{BLOCKS_MARKER_END}\n"
-    )
-    if "</body>" in html:
-        return html.replace("</body>", block + "</body>", 1)
-    return html + block
-
-
-def inject_learning(html: str, learning_js: str) -> str:
-    block = f"{LEARNING_MARKER_START}\n<script>\n{learning_js}</script>\n{LEARNING_MARKER_END}\n"
-    if "</body>" in html:
-        return html.replace("</body>", block + "</body>", 1)
-    return html + block
-
-
-def load_json_if_exists(path: Path) -> dict[str, object] | None:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def inject_recommendation_data(
-    html: str,
-    *,
-    rules_config: dict[str, object] | None,
-    learned_model: dict[str, object] | None,
-) -> str:
-    blocks: list[str] = [RECOMMENDATION_DATA_MARKER_START]
-    if rules_config is not None:
-        blocks.append(
-            '<script id="notion-printer-recommendation-rules" type="application/json">'
-            + json.dumps(rules_config, ensure_ascii=False)
-            + "</script>"
-        )
-    if learned_model is not None:
-        blocks.append(
-            '<script id="notion-printer-recommendation-model" type="application/json">'
-            + json.dumps(learned_model, ensure_ascii=False)
-            + "</script>"
-        )
-    blocks.append(RECOMMENDATION_DATA_MARKER_END)
-    block = "\n".join(blocks) + "\n"
-    if "</body>" in html:
-        return html.replace("</body>", block + "</body>", 1)
-    return html + block
-
-
-def inject_recommendation(html: str, recommendation_js: str) -> str:
-    block = f"{RECOMMENDATION_MARKER_START}\n<script>\n{recommendation_js}</script>\n{RECOMMENDATION_MARKER_END}\n"
     if "</body>" in html:
         return html.replace("</body>", block + "</body>", 1)
     return html + block
@@ -1648,8 +1651,6 @@ def generate_variant(
     output_dir: Path,
     preview_dir: Path | None,
     theme_css: str,
-    learning_js: str,
-    recommendation_js: str,
     runtime_js: str,
     paged_js: str,
     font_size: str,
@@ -1696,30 +1697,19 @@ def generate_variant(
     manifest["ui_default_mode"] = "full"
     manifest["template_hashes"] = {
         "theme": hashlib.sha1(theme_css.encode("utf-8")).hexdigest()[:12],
-        "learning": hashlib.sha1(learning_js.encode("utf-8")).hexdigest()[:12],
-        "recommendation": hashlib.sha1(recommendation_js.encode("utf-8")).hexdigest()[:12],
         "runtime": hashlib.sha1(runtime_js.encode("utf-8")).hexdigest()[:12],
         "paged": hashlib.sha1(paged_js.encode("utf-8")).hexdigest()[:12],
     }
-    blocks_payload = build_blocks_payload(manifest=manifest, blocks=block_rows)
     manifest_features = manifest.get("features")
     sync_manifest_features_from_blocks(manifest_features, block_rows)
-    rules_config = load_json_if_exists(RULES_MODEL_PATH)
-    learned_model = load_json_if_exists(LAYOUT_MODEL_PATH)
     html = set_body_classes(html, body_classes)
     html = inject_theme(html, theme_css)
     html = inject_manifest(html, manifest)
-    html = inject_blocks_manifest(html, blocks_payload)
-    html = inject_recommendation_data(html, rules_config=rules_config, learned_model=learned_model)
-    html = inject_recommendation(html, recommendation_js)
-    html = inject_learning(html, learning_js)
     html = inject_runtime(html, runtime_js)
     html = inject_paged_config(html, build_paged_config_js())
     html = inject_paged_polyfill(html, paged_js)
 
     output_path.write_text(html, encoding="utf-8")
-    write_document_manifest(manifest)
-    write_blocks_payload(blocks_payload)
     return output_path
 
 
@@ -1736,7 +1726,7 @@ def main() -> int:
     preview_dir_name = args.preview_dir_name or f"{input_path.stem}_preview_assets"
     preview_dir = output_dir / preview_dir_name
 
-    theme_css, learning_js, recommendation_js, runtime_js, paged_js = load_templates()
+    theme_css, runtime_js, paged_js = load_templates()
     printer_profile = detect_printer_page_profile()
     theme_css = build_theme_css(
         theme_css,
@@ -1757,8 +1747,6 @@ def main() -> int:
                 output_dir=output_dir,
                 preview_dir=preview_dir if variant.fast else None,
                 theme_css=theme_css,
-                learning_js=learning_js,
-                recommendation_js=recommendation_js,
                 runtime_js=runtime_js,
                 paged_js=paged_js,
                 font_size=args.font_size,

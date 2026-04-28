@@ -798,50 +798,20 @@
     }
   }
 
-  function learningRuntime() {
-    return window.NotionPrinterLearning || null;
-  }
-
   function recommendationRuntime() {
     return null;
   }
 
   function logLearningAction(actionType, payload) {
-    try {
-      var learning = learningRuntime();
-      if (!learning || typeof learning.logAction !== 'function') return '';
-      var safePayload = Object.assign({}, payload || {});
-      var targetNode = safePayload.targetNode || safePayload.node || null;
-      if (!safePayload.selection) {
-        safePayload.selection = Object.assign({ active_edit_id: activeEditableId() }, currentSelectedTarget());
-      }
-      if (!safePayload.viewport) {
-        safePayload.viewport = captureViewportMetrics(targetNode);
-      }
-      return learning.logAction(actionType, safePayload);
-    } catch (error) {
-      return '';
-    }
+    return '';
   }
 
   function flushLearningEvents(useBeacon) {
-    try {
-      var learning = learningRuntime();
-      if (!learning || typeof learning.flushEvents !== 'function') return;
-      learning.flushEvents(!!useBeacon);
-    } catch (error) {
-      // Ignore logging failures and continue editing.
-    }
+    return;
   }
 
   function lastLearningActionEventId() {
-    try {
-      var learning = learningRuntime();
-      if (!learning || typeof learning.getLastActionEventId !== 'function') return '';
-      return learning.getLastActionEventId() || '';
-    } catch (error) {
-      return '';
-    }
+    return '';
   }
 
   function persistedNodeById(persistId) {
@@ -881,13 +851,17 @@
   }
 
   function blockMetadata(node) {
-    try {
-      var learning = learningRuntime();
-      if (!learning || typeof learning.getBlockMeta !== 'function') return null;
-      return learning.getBlockMeta(node);
-    } catch (error) {
-      return null;
-    }
+    if (!node || node.nodeType !== 1 || !node.closest) return null;
+    var contractNode = node.hasAttribute && node.hasAttribute('data-print-persist-id') ? node : node.closest('[data-print-persist-id]');
+    if (!contractNode || !contractNode.dataset) return null;
+    return {
+      contract_node: contractNode,
+      persist_id: contractNode.dataset.printPersistId || '',
+      block_type: contractNode.dataset.printBlockType || '',
+      block_role: contractNode.dataset.printBlockRole || '',
+      label: contractNode.dataset.printBlockLabel || '',
+      atomic: contractNode.dataset.printAtomic === 'true'
+    };
   }
 
   function blockContractNode(node) {

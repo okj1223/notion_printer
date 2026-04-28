@@ -175,7 +175,6 @@ sudo apt install ./dist/notion-printer_1.0.1_all.deb
 - Ubuntu 앱 메뉴에 `Notion Printer` 하나만 등록됨
 - `Notion Printer`는 고급 옵션 GUI를 바로 엶
 - 앱 본체는 `/opt/notion-printer`에 설치됨
-- 사용자 세션/학습 데이터는 홈 디렉터리의 XDG data 경로 아래에 저장됨
 - 업데이트 후에는 컴퓨터를 다시 시작해주세요.
 - `.deb` 파일을 더블클릭해서 Ubuntu Software로 설치하는 방식도 가능함
 

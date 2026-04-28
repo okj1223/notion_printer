@@ -12,16 +12,12 @@
 
 ## 문서 우선순위 (충돌 시)
 1. 현재 수정 중인 이슈와 직접적으로 관련된 최신 보고서/메모
-2. `FIX_PASS_02_REPORT_KO.md`
-3. `FIX_PASS_01_REPORT_KO.md`
-4. 스키마 계약 파일
-5. 핵심 실행 코드
+2. `FIX_PASS_03_REPORT_KO.md`
+3. 핵심 실행 코드
 
 ## 프로젝트 핵심 파일
 - 진입점/CLI: `notion_print_export.py`
 - 실행/렌더/상태 처리: `notion_print_export/runtime.js`
-- 학습/규칙 처리: `notion_print_export/learning.js`
-- 스키마/데이터 계약: `learning_data/schemas/layout_event.schema.json`
 - 보조/레포트: `FIX_PASS_*.md`
 
 ## 디버깅 규칙

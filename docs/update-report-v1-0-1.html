@@ -292,6 +292,23 @@
       font-size: 0.94em;
     }
 
+    .terminal-code {
+      margin: 10px 0 12px;
+      overflow-x: auto;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #111827;
+      color: #e5eefb;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .terminal-code code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      white-space: pre;
+    }
+
     .footer-note {
       margin-top: 28px;
       text-align: center;
@@ -509,28 +526,28 @@
       <h2>업데이트 방법</h2>
       <ol class="clean">
         <li><code>notion-printer_1.0.1_all.deb</code> 파일을 받습니다.</li>
-        <li>더블클릭으로 설치하거나 아래 명령으로 설치합니다.</li>
+        <li>아래 두 가지 방법 중 하나로 설치합니다.</li>
       </ol>
       <table>
         <tr>
-          <th>설치 방식</th>
-          <th>명령 또는 방법</th>
+          <th>방법</th>
+          <th>설명</th>
         </tr>
         <tr>
-          <td>더블클릭 설치</td>
-          <td>Ubuntu Software에서 설치</td>
+          <td>삭제 후 더블클릭</td>
+          <td>기존 앱을 삭제한 뒤 <code>notion-printer_1.0.1_all.deb</code>를 더블클릭해서 다시 설치합니다.</td>
         </tr>
         <tr>
-          <td>터미널 설치</td>
-          <td><code>sudo apt install ./notion-printer_1.0.1_all.deb</code></td>
+          <td>삭제 없이 터미널 업데이트</td>
+          <td>기존 앱을 지우지 않고 터미널에서 바로 업데이트합니다.</td>
         </tr>
       </table>
+      <pre class="terminal-code"><code>sudo apt install ./notion-printer_1.0.1_all.deb</code></pre>
       <div class="callout sun">
-        <strong>참고</strong>
-        기존 버전이 설치되어 있어도 새 <code>.deb</code> 파일을 그대로 설치하면 업데이트됩니다.
-        더블클릭 후 Ubuntu Software가 <code>이미 설치됨</code> 또는 회색 <code>Install</code> 버튼만 보여주면 삭제하지 말고
-        <code>sudo apt install ./notion-printer_1.0.1_all.deb</code> 명령으로 설치하세요.
-        업데이트 후에는 컴퓨터를 다시 시작해주세요.
+        <strong>업데이트 설치 안내</strong>
+        더블클릭 후 Ubuntu Software가 <code>이미 설치됨</code> 또는 회색 <code>Install</code> 버튼만 보여주면
+        기존 앱을 삭제하고 더블클릭으로 다시 설치하거나, 삭제하지 않고 위 터미널 명령으로 업데이트하세요.
+        설치가 끝나면 컴퓨터를 다시 시작해주세요.
       </div>
     </section>
 
