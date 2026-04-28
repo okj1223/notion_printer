@@ -27,11 +27,12 @@
         <span class="badge sky">팀 공유용 업데이트 노트</span>
         <span class="badge mint">Version 1.0.3</span>
         <span class="badge sun">2026-04-28</span>
+        <span class="badge latest">Latest</span>
       </div>
       <h1>Notion Printer 1.0.3 업데이트 노트</h1>
       <p class="lead">
-        1.0.3은 중첩 ZIP이 들어 있는 Notion export를 더 안정적으로 처리하는 버전입니다.
-        ZIP 안에 원본 페이지가 아닌 조각 HTML이 섞여 있어도, 정상 Notion 페이지 HTML만 골라 출력 대상으로 사용합니다.
+        1.0.3은 ZIP 입력 안정화와 Fast 품질 기본값 정리를 함께 반영한 현재 권장 버전입니다.
+        ZIP 안의 조각 HTML은 건너뛰고, 기본 Fast 품질은 빠름 (1200px / WEBP 68) 기준으로 시작합니다.
       </p>
 
       <div class="hero-grid">
@@ -41,18 +42,18 @@
         </div>
         <div class="info-card">
           <strong>핵심 변경</strong>
-          <span>ZIP 내부의 잘못된 HTML 후보 제외</span>
+          <span>ZIP 입력 안정화와 Fast 품질 기본값 정리</span>
         </div>
         <div class="info-card">
-          <strong>권장 사용</strong>
-          <span>Notion에서 받은 ZIP을 그대로 선택</span>
+          <strong>기본 품질</strong>
+          <span>빠름 (1200px / WEBP 68)</span>
         </div>
       </div>
 
       <div class="actions">
         <a class="button primary" href="./downloads/notion-printer_1.0.3_all.deb" download>1.0.3 설치 파일 받기</a>
         <a class="button secondary" href="./downloads/">업데이트/다운로드로 가기</a>
-        <a class="button secondary" href="./update-report-v1-0-4.html">1.0.4 노트 보기</a>
+        <a class="button secondary" href="./update-report-v1-0-2.html">1.0.2 노트 보기</a>
       </div>
     </section>
 
@@ -72,8 +73,8 @@
           <span>원본 Notion 페이지 구조가 확인된 HTML만 통합 출력에 넘깁니다.</span>
         </div>
         <div class="mini-card">
-          <strong>이전 배포 버전</strong>
-          <span>ZIP 입력 안정화가 들어간 이전 버전입니다. 최신 설치는 1.0.4를 사용하세요.</span>
+          <strong>Fast 기본값</strong>
+          <span>기본 Fast 품질은 <code>빠름 (1200px / WEBP 68)</code>로 시작합니다.</span>
         </div>
       </div>
     </section>
@@ -111,7 +112,15 @@
         </article>
 
         <article class="feature">
-          <h3>3. 생성된 출력 HTML 재입력 방지는 그대로 유지합니다</h3>
+          <h3>3. Fast 품질 기본값을 빠름으로 맞췄습니다</h3>
+          <p>
+            앱을 처음 열었을 때와 터미널에서 별도 옵션 없이 실행했을 때 모두 <code>1200px / WEBP 68</code> 기준을 사용합니다.
+            더 선명한 이미지가 필요하면 고급 옵션에서 <code>선명</code> 또는 <code>고품질</code>을 선택하면 됩니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>4. 생성된 출력 HTML 재입력 방지는 그대로 유지합니다</h3>
           <p>
             기존처럼 <code>*_print*.html</code> 결과물이나 Notion Printer가 만든 관리 폴더 안의 HTML은 입력으로 다시 사용하지 않습니다.
             원본 Notion export HTML 또는 ZIP을 선택하는 흐름을 유지합니다.
@@ -119,7 +128,7 @@
         </article>
 
         <article class="feature">
-          <h3>4. ZIP 입력 실패 가능성을 줄였습니다</h3>
+          <h3>5. ZIP 입력 실패 가능성을 줄였습니다</h3>
           <p>
             정상 페이지 HTML이 ZIP 안에 있으면 부분 HTML 때문에 전체 작업이 멈추는 상황을 줄였습니다.
             특히 공유 페이지가 많거나 export 구조가 깊은 문서에서 도움이 됩니다.
@@ -146,6 +155,10 @@
         <tr>
           <td>HTML 파일을 직접 선택</td>
           <td>원본 Notion export HTML을 선택합니다. 생성된 출력 HTML은 입력으로 사용하지 않습니다.</td>
+        </tr>
+        <tr>
+          <td>기본값 그대로 출력</td>
+          <td>Fast 품질은 <code>빠름 (1200px / WEBP 68)</code> 기준으로 미리보기를 생성합니다.</td>
         </tr>
         <tr>
           <td>문제가 계속 발생</td>
@@ -176,7 +189,7 @@ sudo apt install ./notion-printer_1.0.3_all.deb</code></pre>
       <div class="callout mint">
         <strong>권장 확인</strong>
         ZIP 입력에서 오류가 났던 문서는 1.0.3 설치 후 같은 ZIP을 다시 선택해 확인하세요.
-        정상 페이지 HTML이 ZIP 안에 있으면 부분 HTML은 건너뛰고 출력이 진행됩니다.
+        정상 페이지 HTML이 ZIP 안에 있으면 부분 HTML은 건너뛰고 출력이 진행되며, 기본 Fast 품질은 빠름으로 표시됩니다.
       </div>
     </section>
 
@@ -184,6 +197,7 @@ sudo apt install ./notion-printer_1.0.3_all.deb</code></pre>
       <h2>간단 확인 체크리스트</h2>
       <ul class="clean">
         <li><code>dpkg-query</code> 결과가 <code>1.0.3</code>으로 표시되는지 확인</li>
+        <li>앱 실행 시 Fast 품질 기본값이 <code>빠름 (1200px / WEBP 68)</code>인지 확인</li>
         <li>문제가 있었던 ZIP 파일을 그대로 선택해 출력이 진행되는지 확인</li>
         <li>HTML/ZIP 여러 개를 선택했을 때 통합 출력본이 생성되는지 확인</li>
         <li>결과 파일이 <code>_notion_printer_integrated_factory/</code> 아래 생성되는지 확인</li>
