@@ -587,36 +587,6 @@ th {
   font-weight: 900;
 }
 
-.link-list {
-  display: grid;
-  gap: 9px;
-  margin: 14px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.link-list a {
-  display: block;
-  padding: 13px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f6f8fa;
-  font-weight: 900;
-  text-decoration: none;
-}
-
-.link-list a:hover {
-  border-color: rgba(36, 87, 214, 0.28);
-  box-shadow: var(--soft-shadow);
-}
-
-.link-list span {
-  display: block;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-}
-
 .page .hero {
   padding: 30px;
 }
