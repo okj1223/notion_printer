@@ -27,11 +27,12 @@
         <span class="badge sky">팀 공유용 업데이트 노트</span>
         <span class="badge mint">Version 1.0.2</span>
         <span class="badge sun">2026-04-28</span>
+        <span class="badge latest">Latest</span>
       </div>
       <h1>Notion Printer 1.0.2 업데이트 노트</h1>
       <p class="lead">
-        1.0.2는 출력 기능을 크게 바꾼 버전이 아니라, 배포 파일과 버전 확인 흐름을 정리한 안정화 버전입니다.
-        현재 단계에서 사용하지 않는 학습 데이터 관련 파일을 제외하고, 설치된 앱 버전이 정확히 확인되도록 패키지 기준을 맞췄습니다.
+        1.0.2는 2026-04-28 당일 배포 수정사항을 하나로 합친 현재 권장 버전입니다.
+        학습 데이터 관련 파일 제외, 설치 안내 정리, ZIP 입력 안정화, Fast 품질 기본값 빠름을 모두 이 버전에 반영했습니다.
       </p>
 
       <div class="hero-grid">
@@ -41,18 +42,18 @@
         </div>
         <div class="info-card">
           <strong>핵심 변경</strong>
-          <span>버전 관리와 업데이트 안내 정리</span>
+          <span>당일 배포 수정사항 통합</span>
         </div>
         <div class="info-card">
-          <strong>출력 흐름</strong>
-          <span>1.0.1의 HTML/ZIP 사용 방식 유지</span>
+          <strong>기본 품질</strong>
+          <span>빠름 (1200px / WEBP 68)</span>
         </div>
       </div>
 
       <div class="actions">
         <a class="button primary" href="./downloads/notion-printer_1.0.2_all.deb" download>1.0.2 설치 파일 받기</a>
         <a class="button secondary" href="./downloads/">업데이트/다운로드로 가기</a>
-        <a class="button secondary" href="./update-report-v1-0-3.html">1.0.3 노트 보기</a>
+        <a class="button secondary" href="./update-report-v1-0-1.html">1.0.1 노트 보기</a>
       </div>
     </section>
 
@@ -64,16 +65,16 @@
           <span>현재 배포에 쓰지 않는 학습 데이터와 추천 스크립트를 제거했습니다.</span>
         </div>
         <div class="mini-card">
-          <strong>버전 기준 정리</strong>
-          <span>패키지 버전, 설치 파일명, 설치 후 확인되는 버전이 같은 값을 가리키도록 맞췄습니다.</span>
+          <strong>설치/버전 안내</strong>
+          <span>삭제 후 재설치, 터미널 업데이트, 설치 후 버전 확인을 같은 흐름으로 안내합니다.</span>
         </div>
         <div class="mini-card">
-          <strong>업데이트 안내 개선</strong>
-          <span>삭제 후 재설치와 터미널 업데이트 두 가지 방법을 같은 기준으로 안내합니다.</span>
+          <strong>ZIP 입력 안정화</strong>
+          <span><code>.page-body</code>가 없는 부분 HTML은 출력 후보에서 제외합니다.</span>
         </div>
         <div class="mini-card">
-          <strong>확인 명령 추가</strong>
-          <span>설치가 끝난 뒤 실제 적용 버전을 터미널에서 바로 확인할 수 있습니다.</span>
+          <strong>Fast 기본값</strong>
+          <span>기본 Fast 품질은 <code>빠름 (1200px / WEBP 68)</code>로 시작합니다.</span>
         </div>
       </div>
     </section>
@@ -112,6 +113,38 @@
             설치 방법, 재시작, 버전 확인을 한 번에 따라갈 수 있게 정리했습니다.
           </p>
         </article>
+
+        <article class="feature">
+          <h3>5. ZIP 안의 HTML을 고를 때 페이지 구조를 먼저 확인합니다</h3>
+          <p>
+            ZIP을 풀고 HTML을 찾을 때 파일 확장자만 보지 않고, Notion 페이지 본문 구조인 <code>.page-body</code>가 있는지 확인합니다.
+            구조가 없으면 출력 후보에서 제외합니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>6. 중첩 ZIP에서 정상 페이지 HTML만 남깁니다</h3>
+          <p>
+            ZIP 안에 다른 ZIP이 들어 있는 경우에도 자동 압축 해제는 유지합니다.
+            다만 압축을 푼 뒤 실제 페이지로 판단되는 HTML만 통합 출력에 넘깁니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>7. Fast 품질 기본값을 빠름으로 맞췄습니다</h3>
+          <p>
+            앱을 처음 열었을 때와 터미널에서 별도 옵션 없이 실행했을 때 모두 <code>1200px / WEBP 68</code> 기준을 사용합니다.
+            더 선명한 이미지가 필요하면 고급 옵션에서 <code>선명</code> 또는 <code>고품질</code>을 선택하면 됩니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>8. 하루 공개 버전은 하나로 정리합니다</h3>
+          <p>
+            2026-04-28에 나온 수정사항은 1.0.2에 합쳤습니다.
+            팀원이 보는 최신 다운로드와 업데이트 노트는 이 버전 하나만 가리킵니다.
+          </p>
+        </article>
       </div>
     </section>
 
@@ -136,7 +169,19 @@
         </tr>
         <tr>
           <td>출력 기능 사용</td>
-          <td>HTML/ZIP 선택, 여러 문서 통합, 브라우저 미리보기 흐름은 1.0.1과 같습니다.</td>
+          <td>HTML/ZIP 선택, 여러 문서 통합, 브라우저 미리보기 흐름을 유지합니다.</td>
+        </tr>
+        <tr>
+          <td>Notion export ZIP을 그대로 선택</td>
+          <td>ZIP 안에서 정상 Notion 페이지 HTML을 찾아 출력 대상으로 사용합니다.</td>
+        </tr>
+        <tr>
+          <td>ZIP 안에 조각 HTML이 섞여 있음</td>
+          <td><code>.page-body</code>가 없는 HTML은 자동으로 건너뜁니다.</td>
+        </tr>
+        <tr>
+          <td>기본값 그대로 출력</td>
+          <td>Fast 품질은 <code>빠름 (1200px / WEBP 68)</code> 기준으로 미리보기를 생성합니다.</td>
         </tr>
       </table>
     </section>
@@ -162,8 +207,8 @@ sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
 
       <div class="callout sun">
         <strong>확인 기준</strong>
-        출력 결과가 달라졌는지보다, 설치된 버전이 <code>1.0.2</code>로 표시되는지 먼저 확인하세요.
-        1.0.2는 배포와 버전 확인 기준을 정리한 안정화 버전입니다.
+        설치된 버전이 <code>1.0.2</code>로 표시되는지 먼저 확인하세요.
+        ZIP 입력 안정화와 Fast 품질 기본값 정리도 1.0.2 설치 파일에 함께 들어 있습니다.
       </div>
     </section>
 
@@ -171,6 +216,7 @@ sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
       <h2>간단 확인 체크리스트</h2>
       <ul class="clean">
         <li><code>dpkg-query</code> 결과가 <code>1.0.2</code>로 표시되는지 확인</li>
+        <li>앱 실행 시 Fast 품질 기본값이 <code>빠름 (1200px / WEBP 68)</code>인지 확인</li>
         <li>Ubuntu 앱 메뉴에서 <code>Notion Printer</code>가 정상 실행되는지 확인</li>
         <li>HTML 또는 ZIP 파일 1개로 출력본이 생성되는지 확인</li>
         <li>여러 HTML/ZIP 파일 선택 시 통합 출력본이 생성되는지 확인</li>
