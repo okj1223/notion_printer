@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notion Printer 1.0.2 업데이트 노트</title>
+  <link rel="stylesheet" href="./assets/site.css">
+</head>
+<body class="report-page">
+  <header class="site-header">
+    <nav class="nav" aria-label="주요 링크">
+      <a class="brand" href="./index.html">
+        <img src="./assets/notion-printer-512.png" alt="">
+        <span>Notion Printer</span>
+      </a>
+      <div class="nav-links">
+        <a href="./index.html">메인</a>
+        <a href="./team-user-guide.html">처음 쓰는 법</a>
+        <a href="./downloads/">업데이트/다운로드</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="badge-row">
+        <span class="badge sky">팀 공유용 업데이트 노트</span>
+        <span class="badge mint">Version 1.0.2</span>
+        <span class="badge sun">2026-04-28</span>
+      </div>
+      <h1>Notion Printer 1.0.2 업데이트 노트</h1>
+      <p class="lead">
+        1.0.2는 출력 기능을 크게 바꾼 버전이 아니라, 배포 파일과 버전 확인 흐름을 정리한 안정화 버전입니다.
+        현재 단계에서 사용하지 않는 학습 데이터 관련 파일을 제외하고, 설치된 앱 버전이 정확히 확인되도록 패키지 기준을 맞췄습니다.
+      </p>
+
+      <div class="hero-grid">
+        <div class="info-card">
+          <strong>설치 파일</strong>
+          <span>notion-printer_1.0.2_all.deb</span>
+        </div>
+        <div class="info-card">
+          <strong>핵심 변경</strong>
+          <span>버전 관리와 업데이트 안내 정리</span>
+        </div>
+        <div class="info-card">
+          <strong>출력 흐름</strong>
+          <span>1.0.1의 HTML/ZIP 사용 방식 유지</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="button primary" href="./downloads/notion-printer_1.0.2_all.deb" download>1.0.2 설치 파일 받기</a>
+        <a class="button secondary" href="./downloads/">업데이트/다운로드로 가기</a>
+        <a class="button secondary" href="./update-report-v1-0-3.html">1.0.3 노트 보기</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>한눈에 보기</h2>
+      <div class="mini-grid">
+        <div class="mini-card">
+          <strong>불필요 파일 제외</strong>
+          <span>현재 배포에 쓰지 않는 학습 데이터와 추천 스크립트를 제거했습니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>버전 기준 정리</strong>
+          <span>패키지 버전, 설치 파일명, 설치 후 확인되는 버전이 같은 값을 가리키도록 맞췄습니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>업데이트 안내 개선</strong>
+          <span>삭제 후 재설치와 터미널 업데이트 두 가지 방법을 같은 기준으로 안내합니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>확인 명령 추가</strong>
+          <span>설치가 끝난 뒤 실제 적용 버전을 터미널에서 바로 확인할 수 있습니다.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>변경사항</h2>
+      <div class="feature-list">
+        <article class="feature">
+          <h3>1. 현재 쓰지 않는 학습 데이터 관련 파일 제외</h3>
+          <p>
+            인쇄 결과 추천이나 학습용으로 쌓아둔 데이터 파일은 현재 팀 배포 단계에서 사용하지 않습니다.
+            1.0.2부터는 배포와 유지보수에 필요한 파일 위주로 정리했습니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>2. 설치된 앱 버전 확인 기준 정리</h3>
+          <p>
+            설치 후 <code>dpkg-query</code>로 확인되는 패키지 버전과 앱 내부 버전 파일이 같은 값을 가리키도록 패키지 빌드 방식을 정리했습니다.
+            이후 버전에서도 같은 방식으로 확인하면 됩니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>3. 배포 파일명 기준의 업데이트 안내</h3>
+          <p>
+            설치 파일명은 버전마다 달라지므로 안내 문구를 특정 버전에 고정하지 않고 <code>1.x.x</code> 예시로 바꿨습니다.
+            다운로드한 파일명에 적힌 버전을 넣어 실행하면 됩니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>4. 업데이트 후 재시작 안내 위치 정리</h3>
+          <p>
+            업데이트 후 컴퓨터를 다시 시작해야 한다는 안내를 설치 안내 흐름 안으로 옮겼습니다.
+            설치 방법, 재시작, 버전 확인을 한 번에 따라갈 수 있게 정리했습니다.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>달라지는 사용 흐름</h2>
+      <table>
+        <tr>
+          <th>상황</th>
+          <th>1.0.2 기준 안내</th>
+        </tr>
+        <tr>
+          <td>기존 앱을 지우고 다시 설치</td>
+          <td><code>sudo apt remove notion-printer</code> 실행 후 받은 <code>.deb</code> 파일을 더블클릭해서 설치합니다.</td>
+        </tr>
+        <tr>
+          <td>기존 앱을 지우지 않고 업데이트</td>
+          <td>다운로드 폴더에서 <code>sudo apt install ./notion-printer_1.x.x_all.deb</code>를 실행합니다.</td>
+        </tr>
+        <tr>
+          <td>설치된 버전 확인</td>
+          <td><code>dpkg-query -W -f='${Version}\n' notion-printer</code>로 확인합니다.</td>
+        </tr>
+        <tr>
+          <td>출력 기능 사용</td>
+          <td>HTML/ZIP 선택, 여러 문서 통합, 브라우저 미리보기 흐름은 1.0.1과 같습니다.</td>
+        </tr>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>설치와 확인</h2>
+      <ol class="clean">
+        <li>업데이트/다운로드 페이지에서 <code>notion-printer_1.0.2_all.deb</code>를 받습니다.</li>
+        <li>삭제 후 재설치 또는 터미널 업데이트 중 하나를 선택합니다.</li>
+        <li>설치가 끝나면 컴퓨터를 다시 시작합니다.</li>
+        <li>다시 시작한 뒤 설치된 버전을 확인합니다.</li>
+      </ol>
+
+      <pre><code>cd ~/Downloads
+
+# 삭제 후 다시 설치할 때
+sudo apt remove notion-printer
+
+# 삭제하지 않고 업데이트할 때
+sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
+
+      <pre><code>dpkg-query -W -f='${Version}\n' notion-printer</code></pre>
+
+      <div class="callout sun">
+        <strong>확인 기준</strong>
+        출력 결과가 달라졌는지보다, 설치된 버전이 <code>1.0.2</code>로 표시되는지 먼저 확인하세요.
+        1.0.2는 배포와 버전 확인 기준을 정리한 안정화 버전입니다.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>간단 확인 체크리스트</h2>
+      <ul class="clean">
+        <li><code>dpkg-query</code> 결과가 <code>1.0.2</code>로 표시되는지 확인</li>
+        <li>Ubuntu 앱 메뉴에서 <code>Notion Printer</code>가 정상 실행되는지 확인</li>
+        <li>HTML 또는 ZIP 파일 1개로 출력본이 생성되는지 확인</li>
+        <li>여러 HTML/ZIP 파일 선택 시 통합 출력본이 생성되는지 확인</li>
+      </ul>
+    </section>
+
+    <p class="footer-note">
+      Notion Printer 1.0.2 · 팀 배포용 업데이트 노트
+    </p>
+  </main>
+</body>
+</html>
