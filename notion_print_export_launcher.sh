@@ -55,7 +55,7 @@ show_advanced_form() {
     --text="선택한 HTML 또는 ZIP은 통합 프린터로 처리됩니다. ZIP은 자동 압축 해제 후 원본 HTML을 찾아 사용하며, 여러 파일이면 자동 통합되고 목차 기본값은 꺼져 있습니다." \
     --separator="|" \
     --add-combo="Fast 미리보기 품질 (fast 선택 시)" \
-    --combo-values="선명 (2200px / WEBP 78)|빠름 (1200px / WEBP 68)|균형 (1600px / WEBP 72)|고품질 (2800px / WEBP 84)" \
+    --combo-values="빠름 (1200px / WEBP 68)|균형 (1600px / WEBP 72)|선명 (2200px / WEBP 78)|고품질 (2800px / WEBP 84)" \
     --add-combo="목차" \
     --combo-values="끄기|켜기" \
     --add-combo="쪽번호" \
@@ -97,9 +97,13 @@ resolve_quality_preset() {
       MAX_EDGE="2800"
       QUALITY="84"
       ;;
-    *)
+    "선명 (2200px / WEBP 78)")
       MAX_EDGE="2200"
       QUALITY="78"
+      ;;
+    *)
+      MAX_EDGE="1200"
+      QUALITY="68"
       ;;
   esac
 }
@@ -257,9 +261,9 @@ fi
 USE_PRINT="false"
 USE_COMPACT="true"
 USE_FAST="true"
-QUALITY_PRESET="선명 (2200px / WEBP 78)"
-MAX_EDGE="2200"
-QUALITY="78"
+QUALITY_PRESET="빠름 (1200px / WEBP 68)"
+MAX_EDGE="1200"
+QUALITY="68"
 TOC_CHOICE="끄기"
 TOC_ARG="off"
 PAGE_NUMBER_CHOICE="켜기"
@@ -293,7 +297,7 @@ if [[ "$MODE" == "advanced" ]]; then
     exit 0
   fi
   IFS="|" read -r QUALITY_PRESET TOC_CHOICE PAGE_NUMBER_CHOICE FONT_SIZE_CHOICE OPEN_CHOICE <<< "$FORM_RESULT"
-  QUALITY_PRESET="${QUALITY_PRESET:-선명 (2200px / WEBP 78)}"
+  QUALITY_PRESET="${QUALITY_PRESET:-빠름 (1200px / WEBP 68)}"
   TOC_CHOICE="${TOC_CHOICE:-끄기}"
   PAGE_NUMBER_CHOICE="${PAGE_NUMBER_CHOICE:-켜기}"
   FONT_SIZE_CHOICE="${FONT_SIZE_CHOICE:-보통}"

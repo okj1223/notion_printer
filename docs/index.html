@@ -374,7 +374,7 @@
           여러 문서를 한 권처럼 묶은 뒤 바로 확인할 수 있는 인쇄 미리보기를 만들어줍니다.
         </p>
         <div class="actions">
-          <a class="button primary" href="./downloads/notion-printer_1.0.3_all.deb" download>최신 설치 파일 받기</a>
+          <a class="button primary" href="./downloads/notion-printer_1.0.4_all.deb" download>최신 설치 파일 받기</a>
           <a class="button" href="./team-user-guide.html">처음 쓰는 법 보기</a>
         </div>
         <p class="helper">변경사항과 이전 버전은 <a href="./downloads/">업데이트/다운로드</a>에서 함께 확인할 수 있습니다.</p>
@@ -385,7 +385,7 @@
           <img src="./assets/notion-printer-512.png" alt="Notion Printer 아이콘">
           <div>
             <strong>Notion Printer</strong>
-            <span>v1.0.3 · 2026-04-28 배포</span>
+            <span>v1.0.4 · 2026-04-28 배포</span>
           </div>
         </div>
         <div class="preview-dropzone">
@@ -400,7 +400,7 @@
         <div class="preview-flow">
           <div class="preview-step">
             <strong>권장 기본값</strong>
-            <p>Compact Print, Fast Preview, 목차 끄기, 쪽번호 켜기</p>
+            <p>Compact Print, Fast 품질 빠름, 목차 끄기, 쪽번호 켜기</p>
           </div>
           <div class="preview-output">
             <strong>바로 확인</strong>
@@ -420,12 +420,12 @@
       </div>
       <div class="card-grid install-grid">
         <article class="feature install-panel">
-          <span class="badge latest">Latest v1.0.3</span>
+          <span class="badge latest">Latest v1.0.4</span>
           <h3>삭제 후 더블클릭 설치</h3>
           <p>기존 앱을 지우고 받은 <code>.deb</code> 파일을 더블클릭해서 다시 설치합니다.</p>
           <pre><code>sudo apt remove notion-printer</code></pre>
           <div class="actions">
-            <a class="button primary" href="./downloads/notion-printer_1.0.3_all.deb" download>1.0.3 설치 파일 받기</a>
+            <a class="button primary" href="./downloads/notion-printer_1.0.4_all.deb" download>1.0.4 설치 파일 받기</a>
           </div>
         </article>
         <article class="feature install-panel">
@@ -485,11 +485,23 @@ sudo apt install ./notion-printer_1.x.x_all.deb</code></pre>
       <div class="timeline">
         <article class="release">
           <div>
-            <strong>v1.0.3</strong>
+            <strong>v1.0.4</strong>
             <p>2026-04-28</p>
           </div>
           <div>
             <span class="tag">Latest</span>
+            <h3>Fast 품질 기본값 빠름 적용</h3>
+            <p>기본 Fast 품질을 빠름 (1200px / WEBP 68)으로 맞추고 앱, CLI, 배포 문서를 같은 기준으로 정리했습니다.</p>
+          </div>
+          <a class="button" href="./update-report-v1-0-4.html">자세히</a>
+        </article>
+
+        <article class="release">
+          <div>
+            <strong>v1.0.3</strong>
+            <p>2026-04-28</p>
+          </div>
+          <div>
             <h3>ZIP 안의 부분 HTML 제외</h3>
             <p>중첩 ZIP이 들어 있는 Notion export에서 깨진 조각 HTML을 건너뛰고 정상 페이지 HTML만 처리합니다.</p>
           </div>

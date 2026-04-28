@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notion Printer 1.0.4 업데이트 노트</title>
+  <link rel="stylesheet" href="./assets/site.css">
+</head>
+<body class="report-page">
+  <header class="site-header">
+    <nav class="nav" aria-label="주요 링크">
+      <a class="brand" href="./index.html">
+        <img src="./assets/notion-printer-512.png" alt="">
+        <span>Notion Printer</span>
+      </a>
+      <div class="nav-links">
+        <a href="./index.html">메인</a>
+        <a href="./team-user-guide.html">처음 쓰는 법</a>
+        <a href="./downloads/">업데이트/다운로드</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="badge-row">
+        <span class="badge sky">팀 공유용 업데이트 노트</span>
+        <span class="badge mint">Version 1.0.4</span>
+        <span class="badge sun">2026-04-28</span>
+        <span class="badge latest">Latest</span>
+      </div>
+      <h1>Notion Printer 1.0.4 업데이트 노트</h1>
+      <p class="lead">
+        1.0.4는 Fast 품질의 기본값을 빠름 기준으로 맞춘 버전입니다.
+        앱에서 처음 실행했을 때, 터미널로 실행했을 때, 팀원용 안내 문서를 볼 때 모두 같은 기본값을 기준으로 확인할 수 있습니다.
+      </p>
+
+      <div class="hero-grid">
+        <div class="info-card">
+          <strong>설치 파일</strong>
+          <span>notion-printer_1.0.4_all.deb</span>
+        </div>
+        <div class="info-card">
+          <strong>핵심 변경</strong>
+          <span>Fast 품질 기본값 빠름 적용</span>
+        </div>
+        <div class="info-card">
+          <strong>기본 품질</strong>
+          <span>빠름 (1200px / WEBP 68)</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="button primary" href="./downloads/notion-printer_1.0.4_all.deb" download>1.0.4 설치 파일 받기</a>
+        <a class="button secondary" href="./downloads/">업데이트/다운로드로 가기</a>
+        <a class="button secondary" href="./update-report-v1-0-3.html">1.0.3 노트 보기</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>한눈에 보기</h2>
+      <div class="mini-grid">
+        <div class="mini-card">
+          <strong>기본값 정리</strong>
+          <span>Fast 품질 기본값이 <code>빠름 (1200px / WEBP 68)</code>로 표시됩니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>앱과 CLI 일치</strong>
+          <span>앱 실행 화면과 터미널 실행 기본값이 같은 기준을 사용합니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>문서 기준 통일</strong>
+          <span>홈, 다운로드, 처음 쓰는 법, 릴리즈 가이드의 기본 품질 설명을 맞췄습니다.</span>
+        </div>
+        <div class="mini-card">
+          <strong>이전 수정 유지</strong>
+          <span>1.0.3의 ZIP 내부 부분 HTML 제외 처리는 그대로 유지됩니다.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>변경사항</h2>
+      <div class="feature-list">
+        <article class="feature">
+          <h3>1. Fast 품질 기본값을 빠름으로 맞췄습니다</h3>
+          <p>
+            앱을 처음 열면 Fast 품질이 <code>빠름 (1200px / WEBP 68)</code> 기준으로 시작합니다.
+            이미지가 많은 문서도 미리보기를 가볍게 열어 확인하기 위한 기본값입니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>2. 터미널 실행 기본값도 같은 기준으로 정리했습니다</h3>
+          <p>
+            별도 옵션 없이 스크립트를 실행할 때도 <code>--max-edge 1200</code>, <code>--quality 68</code> 기준을 사용합니다.
+            앱으로 실행하든 터미널로 실행하든 기본 출력 조건이 달라지지 않습니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>3. 선명 옵션은 고급 선택지로 유지합니다</h3>
+          <p>
+            더 선명한 이미지가 필요하면 고급 옵션에서 <code>균형</code>, <code>선명</code>, <code>고품질</code>을 선택할 수 있습니다.
+            기본 시작점만 빠름으로 정리했습니다.
+          </p>
+        </article>
+
+        <article class="feature">
+          <h3>4. 팀원용 안내 문서를 같은 말로 맞췄습니다</h3>
+          <p>
+            홈 화면, 다운로드 페이지, 처음 쓰는 법, 릴리즈 가이드에서 기본 품질을 같은 값으로 안내합니다.
+            버전과 설치 파일명도 1.0.4 기준으로 맞췄습니다.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>달라지는 사용 흐름</h2>
+      <table>
+        <tr>
+          <th>상황</th>
+          <th>1.0.4 기준 안내</th>
+        </tr>
+        <tr>
+          <td>기본값 그대로 출력</td>
+          <td>Fast 품질 <code>빠름 (1200px / WEBP 68)</code>로 미리보기를 생성합니다.</td>
+        </tr>
+        <tr>
+          <td>이미지를 더 선명하게 확인</td>
+          <td>고급 옵션에서 <code>선명</code> 또는 <code>고품질</code>을 선택합니다.</td>
+        </tr>
+        <tr>
+          <td>터미널로 실행</td>
+          <td>별도 품질 옵션이 없으면 <code>--max-edge 1200</code>, <code>--quality 68</code> 기준으로 실행됩니다.</td>
+        </tr>
+        <tr>
+          <td>ZIP 입력 사용</td>
+          <td>1.0.3에서 정리한 ZIP 내부 부분 HTML 제외 처리를 그대로 사용합니다.</td>
+        </tr>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>설치와 확인</h2>
+      <ol class="clean">
+        <li>업데이트/다운로드 페이지에서 <code>notion-printer_1.0.4_all.deb</code>를 받습니다.</li>
+        <li>삭제 후 재설치 또는 터미널 업데이트 중 하나를 선택합니다.</li>
+        <li>설치가 끝나면 컴퓨터를 다시 시작합니다.</li>
+        <li>다시 시작한 뒤 설치된 버전을 확인합니다.</li>
+      </ol>
+
+      <pre><code>cd ~/Downloads
+
+# 삭제 후 다시 설치할 때
+sudo apt remove notion-printer
+
+# 삭제하지 않고 업데이트할 때
+sudo apt install ./notion-printer_1.0.4_all.deb</code></pre>
+
+      <pre><code>dpkg-query -W -f='${Version}\n' notion-printer</code></pre>
+
+      <div class="callout mint">
+        <strong>권장 확인</strong>
+        설치된 버전이 <code>1.0.4</code>로 표시되는지 확인하고, 앱의 고급 옵션에서 Fast 품질 기본값이
+        <code>빠름 (1200px / WEBP 68)</code>로 보이는지 확인하세요.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>간단 확인 체크리스트</h2>
+      <ul class="clean">
+        <li><code>dpkg-query</code> 결과가 <code>1.0.4</code>로 표시되는지 확인</li>
+        <li>앱 실행 시 Fast 품질 기본값이 <code>빠름 (1200px / WEBP 68)</code>인지 확인</li>
+        <li>HTML 또는 ZIP 파일 1개로 출력본이 생성되는지 확인</li>
+        <li>여러 HTML/ZIP 파일 선택 시 통합 출력본이 생성되는지 확인</li>
+      </ul>
+    </section>
+
+    <p class="footer-note">
+      Notion Printer 1.0.4 · 팀 배포용 업데이트 노트
+    </p>
+  </main>
+</body>
+</html>

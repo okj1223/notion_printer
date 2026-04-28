@@ -121,14 +121,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-edge",
         type=int,
-        default=2200,
-        help="Longest edge for fast preview assets. Default: 2200.",
+        default=1200,
+        help="Longest edge for fast preview assets. Default: 1200.",
     )
     parser.add_argument(
         "--quality",
         type=int,
-        default=78,
-        help="WEBP quality for fast preview assets. Default: 78.",
+        default=68,
+        help="WEBP quality for fast preview assets. Default: 68.",
     )
     parser.add_argument(
         "--font-size",
