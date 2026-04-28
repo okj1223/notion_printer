@@ -47,6 +47,30 @@
 - `v2.0.0`
   - 사용 방식이 바뀌거나 호환성이 깨지는 큰 변경
 
+## 버전 일치 원칙
+
+배포할 때는 아래 값이 모두 같은 버전을 가리켜야 합니다.
+
+- 루트의 `VERSION`
+- Git 태그 이름
+- `.deb` 파일명
+- `.deb` 내부 `DEBIAN/control`의 `Version`
+- 설치 후 `/opt/notion-printer/VERSION`
+
+설치된 버전 확인:
+
+```bash
+dpkg-query -W -f='${Version}\n' notion-printer
+```
+
+.deb 파일 자체의 버전 확인:
+
+```bash
+dpkg-deb -f notion-printer_1.0.2_all.deb Version
+```
+
+기능을 지우거나 패키지에 포함되는 파일 구성이 바뀌면 패치 버전을 올립니다. 예를 들어 `1.0.1` 배포 후 학습 데이터 파일을 제거했다면 같은 `1.0.1`로 다시 덮어쓰지 않고 `1.0.2`로 배포합니다.
+
 ## 배포 전 체크리스트
 
 릴리스 전에는 아래 8가지를 반드시 직접 확인합니다.

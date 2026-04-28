@@ -51,7 +51,7 @@ install -m 644 "$REPO_ROOT/notion_print_preview.py" "$APP_ROOT/notion_print_prev
 install -m 644 "$REPO_ROOT/README.md" "$DOC_DIR/README.md"
 install -m 644 "$REPO_ROOT/RELEASE_GUIDE_KO.md" "$DOC_DIR/RELEASE_GUIDE_KO.md"
 install -m 644 "$REPO_ROOT/TEAM_USER_GUIDE.html" "$DOC_DIR/TEAM_USER_GUIDE.html"
-install -m 644 "$REPO_ROOT/VERSION" "$APP_ROOT/VERSION"
+printf '%s\n' "$PACKAGE_VERSION" > "$APP_ROOT/VERSION"
 install -m 644 "$REPO_ROOT/scripts/print_integrated_factory.py" "$APP_ROOT/scripts/print_integrated_factory.py"
 install -m 644 "$REPO_ROOT/scripts/prepare_notion_inputs.py" "$APP_ROOT/scripts/prepare_notion_inputs.py"
 install -m 644 "$REPO_ROOT/assets/icons/notion-printer-256.png" "$APP_ROOT/assets/icons/notion-printer-256.png"
@@ -129,6 +129,7 @@ fi
 
 echo "Built package:"
 echo "$OUTPUT_DEB"
+echo "Package version: $PACKAGE_VERSION"
 echo
 echo "Install on Ubuntu:"
 echo "sudo apt install ./${OUTPUT_DEB#"$REPO_ROOT"/}"

@@ -157,7 +157,7 @@ cd /path/to/notion_printer
 
 ```bash
 cd /path/to/notion_printer
-./scripts/build_deb_package.sh 1.0.1
+./scripts/build_deb_package.sh 1.0.2
 ```
 
 빌드 결과:
@@ -167,7 +167,7 @@ cd /path/to/notion_printer
 빌드한 저장소에서 바로 설치할 때:
 
 ```bash
-sudo apt install ./dist/notion-printer_1.0.1_all.deb
+sudo apt install ./dist/notion-printer_1.0.2_all.deb
 ```
 
 설치 후:
