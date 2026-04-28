@@ -13,6 +13,10 @@ from pathlib import Path, PurePosixPath
 
 
 PRINT_OUTPUT_RE = re.compile(r"_print(?:_compact)?(?:_fast)?\.html$", re.IGNORECASE)
+NOTION_PAGE_BODY_RE = re.compile(
+    r"\bclass\s*=\s*(['\"])[^'\"]*\bpage-body\b[^'\"]*\1",
+    re.IGNORECASE,
+)
 
 
 def safe_slug(value: str) -> str:
@@ -37,7 +41,17 @@ def is_source_html(path: Path, source_root: Path) -> bool:
         return False
     if path_within_generated_subdir(path, source_root):
         return False
+    if not has_notion_page_body(path):
+        return False
     return True
+
+
+def has_notion_page_body(path: Path) -> bool:
+    try:
+        raw_html = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return bool(NOTION_PAGE_BODY_RE.search(raw_html))
 
 
 def path_within_managed_output(path: Path) -> bool:

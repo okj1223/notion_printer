@@ -222,9 +222,27 @@
     <section class="timeline" aria-label="릴리즈 목록">
       <article class="release">
         <div>
-          <h2>v1.0.2</h2>
+          <h2>v1.0.3</h2>
           <p class="date">2026-04-28</p>
           <span class="badge">Latest</span>
+        </div>
+        <div>
+          <h3>ZIP 안의 부분 HTML 제외</h3>
+          <p>중첩 ZIP이 들어 있는 Notion export에서 깨진 조각 HTML을 건너뛰고 정상 페이지 HTML만 처리합니다.</p>
+          <ul>
+            <li><code>.page-body</code>가 없는 부분 HTML 제외</li>
+            <li>중첩 ZIP 안의 정상 Notion 페이지 HTML만 출력 대상으로 사용</li>
+          </ul>
+          <div class="actions">
+            <a class="button primary" href="./downloads/">다운로드</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="release">
+        <div>
+          <h2>v1.0.2</h2>
+          <p class="date">2026-04-28</p>
         </div>
         <div>
           <h3>설치와 버전 확인 안내 개선</h3>
@@ -234,9 +252,6 @@
             <li>다운로드한 <code>.deb</code> 파일명 기준의 업데이트 명령 안내</li>
             <li>설치 후 버전 확인 방법 안내</li>
           </ul>
-          <div class="actions">
-            <a class="button primary" href="./downloads/">다운로드</a>
-          </div>
         </div>
       </article>
 
