@@ -153,6 +153,39 @@
       font-weight: 800;
     }
 
+    .install-note {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border: 1px solid rgba(154, 106, 19, 0.24);
+      border-radius: 8px;
+      background: var(--amber-soft);
+      color: #76500f;
+    }
+
+    .install-note strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .install-note p {
+      margin: 4px 0 10px;
+      font-size: 14px;
+    }
+
+    .install-note pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .install-note pre code {
+      padding: 0;
+      background: transparent;
+      white-space: pre;
+    }
+
     .hero-meta {
       display: grid;
       gap: 10px;
@@ -404,6 +437,11 @@
           <a class="button" href="./team-user-guide.html">처음 쓰는 법 보기</a>
         </div>
         <p class="helper">이전 버전은 <a href="./downloads/">보관함</a>에 따로 모아두었습니다.</p>
+        <div class="install-note">
+          <strong>업데이트 설치 안내</strong>
+          <p>기존 버전에서 더블클릭 후 Ubuntu Software가 <code>이미 설치됨</code> 또는 회색 <code>Install</code> 버튼만 보여도 삭제하지 말고 터미널로 1.0.1을 설치하세요.</p>
+          <pre><code>sudo apt install ~/Downloads/notion-printer_1.0.1_all.deb</code></pre>
+        </div>
       </div>
 
       <aside class="app-preview" aria-label="Notion Printer 흐름 미리보기">
