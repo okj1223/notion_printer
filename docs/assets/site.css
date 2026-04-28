@@ -230,17 +230,6 @@ th {
   font-weight: 900;
 }
 
-.install-note {
-  border-color: rgba(131, 90, 17, 0.24);
-  background: var(--amber-soft);
-  color: #6f4c10;
-}
-
-.install-note pre {
-  background: #111827;
-  color: #e5eefb;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -454,6 +443,17 @@ th {
   box-shadow: var(--soft-shadow);
 }
 
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.section-heading .lead {
+  margin: 0;
+}
+
 .grid,
 .workflow,
 .hero-grid,
@@ -507,6 +507,24 @@ th {
 
 .card {
   min-height: 132px;
+}
+
+.install-grid {
+  align-items: stretch;
+}
+
+.install-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.install-panel .actions {
+  margin-top: 6px;
+}
+
+.install-panel pre {
+  margin: 4px 0 8px;
 }
 
 .card:nth-child(2),
@@ -777,6 +795,10 @@ li + li {
     grid-template-columns: 1fr;
   }
 
+  .section-heading {
+    display: grid;
+  }
+
   h1 { font-size: 38px; }
 }
 
@@ -808,15 +830,24 @@ li + li {
     padding: 20px;
   }
 
+  .home-page .hero {
+    min-height: auto;
+  }
+
+  .home-page .hero > *,
+  .actions {
+    min-width: 0;
+  }
+
   .home-page .section {
     padding: 22px 0;
   }
 
   h1 {
-    max-width: calc(100vw - 68px);
-    font-size: 32px;
+    max-width: 100%;
+    font-size: 30px;
     line-height: 1.16;
-    word-break: break-all;
+    word-break: keep-all;
     overflow-wrap: anywhere;
   }
 
@@ -825,14 +856,24 @@ li + li {
     overflow-wrap: anywhere;
   }
 
+  pre {
+    max-width: 100%;
+  }
+
+  pre code {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
   .mobile-only-break {
     display: block;
   }
 
   .lead {
-    max-width: calc(100vw - 68px);
+    max-width: 100%;
     font-size: 16px;
-    word-break: break-all;
+    word-break: keep-all;
     overflow-wrap: anywhere;
   }
 
@@ -842,8 +883,30 @@ li + li {
     word-break: normal;
     overflow-wrap: anywhere;
   }
+
+  .home-page .app-preview {
+    padding: 14px;
+  }
+
+  .home-page .app-preview .preview-title {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .home-page .app-preview .preview-dropzone,
+  .home-page .app-preview .preview-flow {
+    display: none;
+  }
+
   table { display: block; overflow-x: auto; }
-  .button { width: 100%; }
+  .button {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 100%;
+    white-space: normal;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
   .home-page .hero,
   .app-preview,
   .preview-step,
