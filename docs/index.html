@@ -452,14 +452,18 @@
         <p class="helper">이전 버전은 <a href="./downloads/">보관함</a>에 따로 모아두었습니다.</p>
         <div class="install-note">
           <strong>업데이트 설치 안내</strong>
-          <p>기존 버전이 설치된 PC에서 1.0.2로 올리는 방법은 두 가지입니다.</p>
+          <p>설치 파일명은 배포마다 달라집니다. 아래 예시의 <code>1.x.x</code> 자리에 다운로드한 파일명에 적힌 버전을 넣어 실행하세요.</p>
           <ol>
-            <li>기존 앱을 삭제한 뒤 <code>notion-printer_1.0.2_all.deb</code>를 더블클릭해서 다시 설치합니다.</li>
-            <li>삭제하지 않고 아래 터미널 명령으로 바로 업데이트합니다.</li>
+            <li>기존 앱을 삭제한 뒤 받은 <code>.deb</code> 파일을 더블클릭해서 다시 설치합니다.</li>
+            <li>기존 앱을 삭제하지 않고 터미널에서 바로 업데이트합니다.</li>
           </ol>
-          <pre><code>sudo apt install ~/Downloads/notion-printer_1.0.2_all.deb</code></pre>
+          <pre><code># 삭제 후 다시 설치할 때
+sudo apt remove notion-printer
+
+# 삭제하지 않고 업데이트할 때
+sudo apt install ~/Downloads/notion-printer_1.x.x_all.deb</code></pre>
           <p>설치가 끝나면 컴퓨터를 다시 시작해주세요.</p>
-          <p>다시 시작한 뒤 설치된 버전은 아래 명령으로 확인합니다.</p>
+          <p>다시 시작한 뒤 설치된 버전은 아래 명령으로 확인합니다. 다운로드한 파일명에 적힌 버전과 같으면 정상입니다.</p>
           <pre><code>dpkg-query -W -f='${Version}\n' notion-printer</code></pre>
         </div>
       </div>
@@ -545,8 +549,8 @@
           </div>
           <div>
             <span class="tag">Latest</span>
-            <h3>버전 확인과 배포 파일 기준을 정리</h3>
-            <p>학습 데이터 관련 파일을 제거하고, 설치 안내와 버전 확인 명령을 최신 배포 파일 기준으로 맞췄습니다.</p>
+            <h3>설치와 버전 확인 안내 개선</h3>
+            <p>사용하지 않는 학습 데이터 파일이 빠졌고, 업데이트 설치와 버전 확인 방법이 더 명확해졌습니다.</p>
           </div>
           <a class="button" href="./downloads/">받기</a>
         </article>
@@ -557,8 +561,8 @@
             <p>2026-04-24</p>
           </div>
           <div>
-            <h3>ZIP 입력과 여러 문서 통합을 더 편하게</h3>
-            <p>HTML/ZIP 선택 흐름을 정리하고, 이미지 경로 처리와 팀원 가이드를 보강했습니다.</p>
+            <h3>ZIP 입력과 여러 문서 통합 개선</h3>
+            <p>HTML/ZIP 선택 흐름, 이미지 경로 처리, 사용 가이드가 함께 정리되었습니다.</p>
           </div>
           <a class="button" href="./update-report-v1-0-1.html">자세히</a>
         </article>

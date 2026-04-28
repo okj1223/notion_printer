@@ -266,7 +266,7 @@
       <h1>Notion Printer 사용 가이드</h1>
       <p class="lead">Notion에서 export한 HTML 또는 ZIP을 인쇄하기 좋은 통합 문서로 만들고, 출력 전 브라우저 미리보기에서 페이지 나눔과 이미지 크기를 직접 다듬는 도구입니다.</p>
       <div class="grid">
-        <div class="card"><strong>설치 파일</strong><span><code>notion-printer_1.0.2_all.deb</code></span></div>
+        <div class="card"><strong>설치 파일</strong><span><code>notion-printer_1.x.x_all.deb</code></span></div>
         <div class="card"><strong>실행 앱</strong><span>Ubuntu 앱 메뉴의 <code>Notion Printer</code></span></div>
         <div class="card"><strong>추천 설정</strong><span><code>Compact Print + Fast Preview 추가</code></span></div>
       </div>
@@ -333,21 +333,25 @@
       <h2>4. 설치 방법</h2>
       <h3>더블클릭 설치</h3>
       <ol class="steps">
-        <li><code>notion-printer_1.0.2_all.deb</code> 파일을 다운로드합니다.</li>
+        <li><code>notion-printer_1.x.x_all.deb</code> 파일을 다운로드합니다. <code>1.x.x</code>는 파일명에 적힌 실제 버전입니다.</li>
         <li>파일을 더블클릭합니다.</li>
         <li>Ubuntu Software 화면에서 <code>Install</code>을 누릅니다.</li>
         <li>Ubuntu 앱 메뉴에서 <code>Notion Printer</code>를 실행합니다.</li>
       </ol>
       <h3>터미널 설치</h3>
-      <pre><code>sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
+      <pre><code>sudo apt install ./notion-printer_1.x.x_all.deb</code></pre>
       <div class="callout amber">
         <strong>업데이트 설치 안내</strong>
-        기존 버전에서 1.0.2로 업데이트하는 방법은 두 가지입니다.
+        업데이트 방법은 두 가지입니다. 아래 예시의 <code>1.x.x</code> 자리에 다운로드한 파일명에 적힌 버전을 넣어 실행하세요.
         <ol>
-          <li>기존 앱을 삭제한 뒤 <code>notion-printer_1.0.2_all.deb</code>를 더블클릭해서 다시 설치합니다.</li>
-          <li>삭제하지 않고 아래 터미널 명령으로 바로 업데이트합니다.</li>
+          <li>기존 앱을 삭제한 뒤 받은 <code>.deb</code> 파일을 더블클릭해서 다시 설치합니다.</li>
+          <li>기존 앱을 삭제하지 않고 아래 터미널 명령으로 바로 업데이트합니다.</li>
         </ol>
-        <pre><code>sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
+        <pre><code># 삭제 후 다시 설치할 때
+sudo apt remove notion-printer
+
+# 삭제하지 않고 업데이트할 때
+sudo apt install ./notion-printer_1.x.x_all.deb</code></pre>
         설치가 끝나면 컴퓨터를 다시 시작해주세요.
         <strong>설치된 버전 확인</strong>
         <pre><code>dpkg-query -W -f='${Version}\n' notion-printer</code></pre>
@@ -461,8 +465,8 @@
       <h2>12. 문제 해결</h2>
       <table>
         <tr><th>문제</th><th>확인할 것</th></tr>
-        <tr><td>설치가 안 됨</td><td>기존 앱을 삭제하고 더블클릭으로 다시 설치하거나, 삭제하지 않고 <code>sudo apt install ./notion-printer_1.0.2_all.deb</code>로 업데이트 설치</td></tr>
-        <tr><td>버전 확인</td><td><code>dpkg-query -W -f='${Version}\n' notion-printer</code> 실행 후 <code>1.0.2</code>인지 확인</td></tr>
+        <tr><td>설치가 안 됨</td><td>기존 앱을 삭제하고 더블클릭으로 다시 설치하거나, 삭제하지 않고 <code>sudo apt install ./notion-printer_1.x.x_all.deb</code>로 업데이트 설치</td></tr>
+        <tr><td>버전 확인</td><td><code>dpkg-query -W -f='${Version}\n' notion-printer</code> 실행 후 다운로드한 파일명에 적힌 버전과 같은지 확인</td></tr>
         <tr><td>앱 메뉴에 안 보임</td><td>잠시 기다리거나 로그아웃 후 다시 로그인. 터미널에서는 <code>notion-printer</code> 실행</td></tr>
         <tr><td>HTML 또는 ZIP 선택 후 실패</td><td>원본 Notion export HTML 또는 ZIP인지, 생성된 <code>*_print*.html</code> 파일이 아닌지, ZIP은 압축을 풀지 않아도 되는지, 접근 권한이 있는지 확인</td></tr>
         <tr><td>이미지가 안 보임</td><td>가능하면 ZIP 파일을 선택하고, HTML을 직접 선택했다면 주변 이미지/첨부 폴더가 함께 있는지 확인</td></tr>

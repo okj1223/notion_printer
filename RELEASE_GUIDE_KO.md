@@ -66,7 +66,7 @@ dpkg-query -W -f='${Version}\n' notion-printer
 .deb 파일 자체의 버전 확인:
 
 ```bash
-dpkg-deb -f notion-printer_1.0.2_all.deb Version
+dpkg-deb -f notion-printer_1.x.x_all.deb Version
 ```
 
 기능을 지우거나 패키지에 포함되는 파일 구성이 바뀌면 패치 버전을 올립니다. 예를 들어 `1.0.1` 배포 후 학습 데이터 파일을 제거했다면 같은 `1.0.1`로 다시 덮어쓰지 않고 `1.0.2`로 배포합니다.
@@ -136,7 +136,7 @@ git tag v1.0.1
 또는 버전을 직접 지정할 수 있습니다.
 
 ```bash
-./scripts/build_deb_package.sh 1.0.1
+./scripts/build_deb_package.sh 1.x.x
 ```
 
 생성 결과:
@@ -156,7 +156,7 @@ git tag v1.0.1
 팀원 설치 명령:
 
 ```bash
-sudo apt install ./notion-printer_1.0.1_all.deb
+sudo apt install ./notion-printer_1.x.x_all.deb
 ```
 
 또는 팀원은 전달받은 `.deb` 파일을 더블클릭해서 Ubuntu Software로 설치할 수 있습니다.
@@ -184,9 +184,9 @@ sudo apt install ./notion-printer_1.0.1_all.deb
 매번 아래 형식으로 짧게 남기면 운영이 편해집니다.
 
 ```text
-버전: v1.0.1
+버전: v1.x.x
 배포일: YYYY-MM-DD
-설치파일: notion-printer_1.0.1_all.deb
+설치파일: notion-printer_1.x.x_all.deb
 
 변경사항
 - 기본 동작을 통합 노션 프린터로 변경
@@ -212,12 +212,12 @@ sudo apt install ./notion-printer_1.0.1_all.deb
 팀원에게는 아래 정도로 공지하면 충분합니다.
 
 ```text
-Notion Printer v1.0.1 배포합니다.
+Notion Printer v1.x.x 배포합니다.
 이번 버전부터 기본 동작은 통합 프린터입니다.
 앱 메뉴에는 Notion Printer 하나만 표시되고, 실행하면 고급 옵션 화면이 바로 열립니다.
 HTML이나 ZIP은 1개 또는 여러 개를 선택할 수 있고, 여러 개를 고르면 자동으로 합쳐집니다.
 ZIP을 넣으면 원본 구조를 유지한 채 자동 압축 해제해서 처리합니다.
 목차는 옵션으로 켤 수 있고 기본값은 꺼져 있습니다.
-설치는 첨부된 notion-printer_1.0.1_all.deb 파일을 실행하거나 apt로 설치하면 됩니다.
+설치는 첨부된 notion-printer_1.x.x_all.deb 파일을 실행하거나 apt로 설치하면 됩니다.
 업데이트 후에는 컴퓨터를 다시 시작해주세요.
 ```

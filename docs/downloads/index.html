@@ -254,9 +254,9 @@
 
   <main class="wrap">
     <section class="hero">
-      <h1>이전 버전 보관함</h1>
+      <h1>다운로드</h1>
       <p class="lead">
-        보통은 최신 버전을 받으면 됩니다. 문제가 생겼거나 비교가 필요할 때만 이전 버전을 사용하세요.
+        최신 설치 파일을 먼저 사용하세요. 문제가 생겼거나 비교가 필요할 때만 이전 버전을 선택하면 됩니다.
       </p>
     </section>
 
@@ -268,8 +268,8 @@
           <span class="badge">Latest</span>
         </div>
         <div>
-          <p>현재 팀에 권장하는 최신 버전입니다. 학습 데이터 관련 파일을 제거하고, 설치 안내와 버전 확인 기준을 정리했습니다.</p>
-          <p>설치 명령: <code>sudo apt install ./notion-printer_1.0.2_all.deb</code></p>
+          <p>현재 권장 버전입니다. 사용하지 않는 학습 데이터 관련 파일을 제외했고, 설치와 버전 확인 안내가 더 명확해졌습니다.</p>
+          <p>터미널 설치는 아래 업데이트 설치 안내를 참고하세요.</p>
         </div>
         <div class="actions">
           <a class="button primary" href="./notion-printer_1.0.2_all.deb" download>이 버전 받기</a>
@@ -284,7 +284,7 @@
         </div>
         <div>
           <p>ZIP 입력, HTML+ZIP 혼합 통합, 팀 배포 페이지 정리를 포함한 이전 배포 버전입니다.</p>
-          <p>설치 명령: <code>sudo apt install ./notion-printer_1.0.1_all.deb</code></p>
+          <p>터미널 설치는 아래 업데이트 설치 안내에서 파일명만 이 버전으로 바꿔 실행하세요.</p>
         </div>
         <div class="actions">
           <a class="button" href="./notion-printer_1.0.1_all.deb" download>이 버전 받기</a>
@@ -300,7 +300,7 @@
         </div>
         <div>
           <p>초기 팀 배포용 패키지입니다. 최신 기능이 필요하지 않거나 비교 확인이 필요할 때만 사용합니다.</p>
-          <p>설치 명령: <code>sudo apt install ./notion-printer_1.0.0_all.deb</code></p>
+          <p>터미널 설치는 아래 업데이트 설치 안내에서 파일명만 이 버전으로 바꿔 실행하세요.</p>
         </div>
         <div class="actions">
           <a class="button" href="./notion-printer_1.0.0_all.deb" download>이 버전 받기</a>
@@ -310,15 +310,20 @@
 
     <section class="notice">
       <p><strong>업데이트 설치 안내</strong></p>
-      <p>기존 버전이 설치된 PC에서 1.0.2로 올리는 방법은 두 가지입니다.</p>
+      <p>설치 파일명은 배포마다 달라집니다. 아래 예시의 <code>1.x.x</code> 자리에 다운로드한 파일명에 적힌 버전을 넣어 실행하세요.</p>
       <ol>
-        <li>기존 앱을 삭제한 뒤 <code>notion-printer_1.0.2_all.deb</code>를 더블클릭해서 다시 설치합니다.</li>
-        <li>삭제하지 않고 다운로드 폴더에서 아래 터미널 명령으로 바로 업데이트합니다.</li>
+        <li>기존 앱을 삭제한 뒤 받은 <code>.deb</code> 파일을 더블클릭해서 다시 설치합니다.</li>
+        <li>기존 앱을 삭제하지 않고 다운로드 폴더에서 터미널로 바로 업데이트합니다.</li>
       </ol>
       <pre><code>cd ~/Downloads
-sudo apt install ./notion-printer_1.0.2_all.deb</code></pre>
+
+# 삭제 후 다시 설치할 때
+sudo apt remove notion-printer
+
+# 삭제하지 않고 업데이트할 때
+sudo apt install ./notion-printer_1.x.x_all.deb</code></pre>
       <p>설치가 끝나면 컴퓨터를 다시 시작해주세요.</p>
-      <p>다시 시작한 뒤 설치된 버전은 아래 명령으로 확인합니다.</p>
+      <p>다시 시작한 뒤 설치된 버전은 아래 명령으로 확인합니다. 다운로드한 파일명에 적힌 버전과 같으면 정상입니다.</p>
       <pre><code>dpkg-query -W -f='${Version}\n' notion-printer</code></pre>
     </section>
   </main>
